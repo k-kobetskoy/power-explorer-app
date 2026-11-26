@@ -60,4 +60,4 @@ When adding new TypeScript files to the Electron part:
 1. Place them in the `/electron/` directory
 2. Import them using ES module syntax (`import ... from ...`)
 3. Export using `export default` or named exports
-4. Run `npm run tsc:electron` to compile them
+4. Run `npm run build:electron` to compile them
