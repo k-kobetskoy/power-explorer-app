@@ -16,7 +16,9 @@
     "build:electron": "npx tsc -p electron/tsconfig.electron.json && node scripts/copy-electron-files.js",
     "package": "electron-builder build --win --publish never",
     "package-mac": "electron-builder build --mac --publish never",
-    "package-linux": "electron-builder build --linux --publish never"
+    "package-linux": "electron-builder build --linux --publish never",
+    "lint": "ng lint",
+    "test:ci": "ng test --watch=false --browsers=ChromeHeadless"
   },
   "repository": "https://github.com/k-kobetskoy/power-explorer-releases",
   "publish": {
@@ -56,9 +58,11 @@
     "@types/electron": "^1.6.10",
     "@types/jasmine": "~4.3.0",
     "@types/node": "^20.11.28",
+    "angular-eslint": "18.4.3",
     "concurrently": "^8.2.2",
     "electron": "^30.0.5",
     "electron-builder": "^24.13.3",
+    "eslint": "^9.15.0",
     "jasmine-core": "~4.6.0",
     "karma": "~6.4.0",
     "karma-chrome-launcher": "~3.2.0",
@@ -66,6 +70,7 @@
     "karma-jasmine": "~5.1.0",
     "karma-jasmine-html-reporter": "~2.1.0",
     "typescript": "~5.4.5",
+    "typescript-eslint": "8.16.0",
     "wait-on": "^7.2.0"
   },
   "build": {
