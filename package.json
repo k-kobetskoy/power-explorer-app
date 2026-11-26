@@ -16,7 +16,8 @@
     "build:electron": "npx tsc -p electron/tsconfig.electron.json && node scripts/copy-electron-files.js",
     "package": "electron-builder build --win --publish never",
     "package-mac": "electron-builder build --mac --publish never",
-    "package-linux": "electron-builder build --linux --publish never"
+    "package-linux": "electron-builder build --linux --publish never",
+    "test:ci": "ng test --watch=false --browsers=ChromeHeadless"
   },
   "repository": "https://github.com/k-kobetskoy/power-explorer-releases",
   "publish": {
