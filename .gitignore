@@ -44,6 +44,11 @@ Thumbs.db
 # Ignore build artifacts and large files
 /release/
 dist-electron/
+# Intermediate tsc output of `npm run build:electron` (copied into dist-electron/)
+/electron/dist/
+
+# Machine-local Claude Code settings
+.claude/settings.local.json
 
 # Agent research notes: kept locally, never committed
 /docs/research/

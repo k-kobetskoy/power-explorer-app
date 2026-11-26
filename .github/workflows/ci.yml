@@ -38,5 +38,5 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # Unit tests are not run yet: the spec suite does not compile.
-      # Add `npm run test:ci` here once the unit-test fix lands.
+      - name: Unit tests
+        run: npm run test:ci
