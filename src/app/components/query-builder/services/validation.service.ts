@@ -76,13 +76,7 @@ export class ValidationService {
             }
         }
 
-        // Skip setting up reactive validations if there are no validators
-        if (node.validatiors.validators.length === 0 &&
-            (!node.attributes$.value || node.attributes$.value.length === 0)) {
-            return of(VALID_RESULT);
-        }
-
-        // Attributes validation observable
+        // Attributes validation observable. Always built: a new node has no attributes yet
         const attributeValidationResults$ = node.attributes$.pipe(
             // distinctUntilChanged((prev, curr) => prev.length === curr.length),
             switchMap(attributes => {

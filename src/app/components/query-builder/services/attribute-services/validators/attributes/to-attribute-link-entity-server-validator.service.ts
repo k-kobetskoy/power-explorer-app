@@ -33,12 +33,16 @@ constructor(private attributeService: AttributeEntityService) { }
           });
         }
   
+        // The name is read when its validation result arrives, so the two always belong together
+        const parentName$ = entityNameAttr.validationResult$.pipe(
+          map(isValid => ({ isValid, entityLogicalName: entityNameAttr.value$.value }))
+        );
+
         return combineLatest([
           attribute.value$.pipe(distinctUntilChanged()),
-          entityNameAttr.validationResult$,
-          entityNameAttr.value$.pipe(distinctUntilChanged())
-        ]).pipe(          
-          switchMap(([attributeName, isValid, entityLogicalName]) => {
+          parentName$
+        ]).pipe(
+          switchMap(([attributeName, { isValid, entityLogicalName }]) => {
             if (!attributeName) {
               return of({
                 isValid: false,

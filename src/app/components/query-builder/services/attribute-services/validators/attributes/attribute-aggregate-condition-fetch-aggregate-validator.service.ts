@@ -15,10 +15,9 @@ validate(attribute: NodeAttribute): Observable<ValidationResult> {
 const rootNode = attribute.parentNode.getRootNode();
 
     return rootNode.attributes$.pipe(
-      distinctUntilChanged((prev, curr) => prev.length === curr.length),
-      switchMap(attributes => {
-        const fetchAggregateAttr = attributes.find(attr => attr.editorName === AttributeNames.rootAggregate);
-
+      map(attributes => attributes.find(attr => attr.editorName === AttributeNames.rootAggregate)),
+      distinctUntilChanged(),
+      switchMap(fetchAggregateAttr => {
         if (!fetchAggregateAttr) {
           return of({
             isValid: false,
