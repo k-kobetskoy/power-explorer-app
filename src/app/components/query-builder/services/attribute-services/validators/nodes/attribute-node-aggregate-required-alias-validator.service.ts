@@ -18,9 +18,9 @@ export class AttributeNodeAggregateRequiredAliasValidatorService implements INod
     const rootNode = node.getRootNode();
 
     return rootNode.attributes$.pipe(
-      switchMap(attributes => {
-        const aggregateAttr = attributes.find(attr => attr.editorName === AttributeNames.attributeAggregate);
-        
+      map(attributes => attributes.find(attr => attr.editorName === AttributeNames.attributeAggregate)),
+      distinctUntilChanged(),
+      switchMap(aggregateAttr => {
         if (!aggregateAttr) {
           return of(VALID_RESULT); 
         }
@@ -36,10 +36,9 @@ export class AttributeNodeAggregateRequiredAliasValidatorService implements INod
             
             // If aggregate is true, check for alias attribute
             return node.attributes$.pipe(
-              distinctUntilChanged((prev, curr) => prev.length === curr.length),
-              switchMap(nodeAttributes => {
-                const aliasAttr = nodeAttributes.find(attr => attr.editorName === AttributeNames.attributeAlias);
-                
+              map(nodeAttributes => nodeAttributes.find(attr => attr.editorName === AttributeNames.attributeAlias)),
+              distinctUntilChanged(),
+              switchMap(aliasAttr => {
                 if (!aliasAttr) {
                   return of({
                     isValid: false,

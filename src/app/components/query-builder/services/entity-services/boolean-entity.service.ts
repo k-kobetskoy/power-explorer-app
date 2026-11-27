@@ -40,7 +40,8 @@ export class BooleanEntityService extends BaseRequestService {
             false: { value: response.FalseOption.Value, label: response.FalseOption.Label.UserLocalizedLabel.Label }
           })),
           tap(data => this.cacheService.setItem<BooleanModel>(data, key)),
-          tap(() => isLoading ? this.getBooleanValuesIsLoading$.next(false) : null)
+          tap(() => isLoading ? this.getBooleanValuesIsLoading$.next(false) : null),
+          this.waitForSignIn(this.getBooleanValuesIsLoading$)
         );
       })
     );

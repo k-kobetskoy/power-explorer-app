@@ -12,7 +12,9 @@ import { INodeData, QueryNodeData } from '../../models/constants/query-node-data
 import { DefaultAttributesFactoryService } from './attribute-factories/default-attributes-factory.service';
 import { QueryNode } from '../../models/query-node';
 import { ValidationService } from '../../services/validation.service';
-import { Observable, switchMap, of, combineLatest, map, takeUntil, distinctUntilChanged } from 'rxjs';
+import { Observable, switchMap, of, combineLatest, map, takeUntil, distinctUntilChanged, startWith, catchError } from 'rxjs';
+import { AttributeNames } from '../../models/constants/attribute-names';
+import { EntityEntityService } from '../entity-services/entity-entity.service';
 import { INodeValidators } from './abstract/i-node-validators';
 import { EntityNodeRequiredNameValidatorService } from './validators/nodes/entity-node-required-name-validator.service';
 import { INodeValidator } from './abstract/i-node-validator';
@@ -40,6 +42,7 @@ export class NodeFactoryService {
     private nodeNameValidator: NodeNameValidatorService,
     private attributeNodeAggregateRequiredAliasValidator: AttributeNodeAggregateRequiredAliasValidatorService,
     private attributeNodeRequiredNameValidator: AttributeNodeRequiredNameValidatorService,
+    private entityService: EntityEntityService,
   ) { }
 
   getAttributesFactory(nodeName: string): IAttributeFactory {
@@ -80,7 +83,32 @@ export class NodeFactoryService {
 
     node.validationResult$ = this.validationService.setupNodeValidation(node);
 
+    if (node.nodeName === QueryNodeData.Entity.NodeName || node.nodeName === QueryNodeData.Link.NodeName) {
+      this.trackEntitySetName(node);
+    }
+
     return node;
+  }
+
+  /**
+   * Keeps node.entitySetName$ in step with the entity name: null while the name is missing or is not an
+   * entity of the environment. Independent of validation, so it does not depend on who subscribes to it.
+   */
+  private trackEntitySetName(node: QueryNode): void {
+    node.attributes$.pipe(
+      map(attributes => attributes.find(attr => attr.editorName === AttributeNames.entityName)),
+      distinctUntilChanged(),
+      switchMap(nameAttribute => nameAttribute ? nameAttribute.value$ : of<string>(null)),
+      distinctUntilChanged(),
+      switchMap(entityName => !entityName ? of<string>(null) : this.entityService.getEntities().pipe(
+        map(entities => entities.find(entity => entity.logicalName === entityName)?.entitySetName ?? null),
+        // Drops the previous name's value while the entity list is still loading
+        startWith<string>(null),
+        // A failed request is reported by the name validation; the next name change asks again
+        catchError(() => of<string>(null))
+      )),
+      takeUntil(node.destroyed$)
+    ).subscribe(entitySetName => node.entitySetName$.next(entitySetName));
   }
 
 
@@ -157,6 +185,9 @@ export class NodeFactoryService {
       return [this.entityNodeNameValidator];
     case QueryNodeData.Attribute.NodeName:
       return [this.attributeNodeRequiredNameValidator, this.attributeNodeAggregateRequiredAliasValidator];
+    case QueryNodeData.Link.NodeName:
+      // Same rule as for the entity node: <link-entity> needs a name
+      return [this.entityNodeNameValidator];
     default:
       return [];
   }
