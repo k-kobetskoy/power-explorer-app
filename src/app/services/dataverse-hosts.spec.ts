@@ -17,19 +17,29 @@ describe('Dataverse addresses', () => {
     'https://org.crm.microsoftdynamics.us',
     'https://org.crm.dynamics.cn',
     'file:///C:/org.dynamics.com',
-    'org.crm.dynamics.com'
+    'org.crm.dynamics.com',
+    'https://graph.microsoft.com\n.dynamics.com',
+    'https://org.crm.dyna\tmics.com',
+    'https://org.crm.dynamics.com\n',
+    '\thttps://org.crm.dynamics.com',
+    'https://org.crm.dynamics.com\u0000',
+    'https://org crm.dynamics.com',
+    'https://org.crm.dynamics.com /',
+    'https:\\\\org.crm.dynamics.com',
+    'https://org.crm.dynamics.com\\'
   ];
 
   rejected.forEach(address => {
-    it(`rejects "${address}"`, () => expect(dataverseOrigin(address)).toBeNull());
+    it(`rejects ${JSON.stringify(address)}`, () => expect(dataverseOrigin(address)).toBeNull());
   });
 
   [
-    'https://org.crm.dynamics.com',
-    'https://org.crm.dynamics.com/',
-    'HTTPS://Org.api.CRM9.Dynamics.com:443'
-  ].forEach(address => {
-    it(`accepts "${address}"`, () => expect(dataverseOrigin(address)).toBe(new URL(address).origin));
+    ['https://org.crm.dynamics.com', 'https://org.crm.dynamics.com'],
+    ['https://org.crm.dynamics.com/', 'https://org.crm.dynamics.com'],
+    ['  https://org.crm.dynamics.com  ', 'https://org.crm.dynamics.com'],
+    ['HTTPS://Org.api.CRM9.Dynamics.com:443', 'https://org.api.crm9.dynamics.com']
+  ].forEach(([address, origin]) => {
+    it(`reduces ${JSON.stringify(address)} to its origin`, () => expect(dataverseOrigin(address)).toBe(origin));
   });
 
   it('applies the same host rule in the connection dialog', () => {
@@ -53,6 +63,11 @@ describe('Dataverse addresses', () => {
       expect(toEnvironmentModel(built)).toEqual(model);
     });
 
+    it('keeps the normalized addresses, not what was sent', () => {
+      expect(toEnvironmentModel({ ...model, url: ` ${model.url}/ `, apiUrl: 'HTTPS://Org.API.crm.dynamics.com:443/' }))
+        .toEqual(model);
+    });
+
     it('keeps only the known fields', () => {
       expect(toEnvironmentModel({ ...model, scopes: ['anything'] })).toEqual(model);
     });
@@ -65,6 +80,8 @@ describe('Dataverse addresses', () => {
       { ...model, url: 'https://example.com' },
       { ...model, apiUrl: 'https://example.com' },
       { ...model, apiUrl: 'https://org.crm.dynamics.com/path' },
+      { ...model, apiUrl: 'https://graph.microsoft.com\n.dynamics.com' },
+      { ...model, url: 'https:\\\\org.crm.dynamics.com' },
       { ...model, apiUrl: ['https://org.crm.dynamics.com'] },
       { ...model, friendlyName: 1 },
       { ...model, urlName: undefined }

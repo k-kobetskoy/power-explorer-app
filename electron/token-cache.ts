@@ -98,7 +98,9 @@ export class EncryptedCachePlugin implements ICachePlugin {
         } else if (!this.encrypted) {
             this.carriedOver = data;
         } else if (!fs.existsSync(this.cachePath)) {
-            // An encrypted cache that is already there is newer than the old file
+            // An encrypted cache that is already there is kept, normally one whose migration could not
+            // delete the old file. After a downgrade and another upgrade the old file is the newer one
+            // and is dropped all the same: at worst the user signs in again
             await this.write(data);
         }
 

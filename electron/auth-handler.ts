@@ -509,13 +509,14 @@ class AuthHandler {
     }
 
     // The active environment counts too: it may be missing from the capped list of recent ones.
-    // Stored models are checked again, earlier versions saved them unvalidated
+    // Stored models are checked and normalized again, earlier versions saved them as typed
     private findStoredEnvironment(requested: EnvironmentModel): EnvironmentModel | null {
         const origin = dataverseOrigin(requested?.apiUrl);
         if (!origin) return null;
 
-        return [...this.getEnvironmentModels(), this.getActiveEnvironment()]
-            .find(stored => dataverseOrigin(stored?.apiUrl) === origin) ?? null;
+        const stored = [...this.getEnvironmentModels(), this.getActiveEnvironment()]
+            .find(model => dataverseOrigin(model?.apiUrl) === origin);
+        return stored ? { ...stored, apiUrl: origin } : null;
     }
 
     // Never opens the browser. `refused` marks an answer where Microsoft declined this account,
@@ -571,7 +572,8 @@ class AuthHandler {
         try {
             const models = this.getEnvironmentModels();
 
-            const existingIndex = models.findIndex(env => env.url === environmentModel.url);
+            // An earlier version may have saved the same address in another spelling
+            const existingIndex = models.findIndex(env => dataverseOrigin(env.url) === environmentModel.url);
 
             if (existingIndex >= 0) {
                 models.splice(existingIndex, 1);

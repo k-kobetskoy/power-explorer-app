@@ -13,9 +13,14 @@ export function isDataverseHost(hostname: string): boolean {
     return DATAVERSE_HOST_SUFFIXES.some(suffix => hostname.endsWith(suffix));
 }
 
-/** The origin of an https address of a Dataverse host without port, path or credentials; null otherwise. */
+/**
+ * The origin of an https address of a Dataverse host without port, path or credentials; null otherwise.
+ * Use the returned value, not the input: the URL parser accepts more spellings than the origin has.
+ */
 export function dataverseOrigin(address: unknown): string | null {
     if (typeof address !== 'string') return null;
+    // The parser would silently drop or rewrite these. Spaces around the address are harmless
+    if (/[\p{Cc}\\]/u.test(address) || /\s/.test(address.trim())) return null;
 
     let parsed: URL;
     try {
@@ -30,14 +35,14 @@ export function dataverseOrigin(address: unknown): string | null {
     return bare && isDataverseHost(parsed.hostname) ? parsed.origin : null;
 }
 
-/** A copy of the known fields of a model received from outside, or null when it is not a valid one. */
+/** The known fields of a model received from outside, addresses reduced to origins; null when invalid. */
 export function toEnvironmentModel(value: unknown): EnvironmentModel | null {
     const model = value as EnvironmentModel;
-    if (!model || !dataverseOrigin(model.url) || !dataverseOrigin(model.apiUrl)
-        || typeof model.friendlyName !== 'string' || typeof model.urlName !== 'string') {
+    const url = dataverseOrigin(model?.url);
+    const apiUrl = dataverseOrigin(model?.apiUrl);
+    if (!url || !apiUrl || typeof model.friendlyName !== 'string' || typeof model.urlName !== 'string') {
         return null;
     }
 
-    const { url, apiUrl, friendlyName, urlName } = model;
-    return { url, apiUrl, friendlyName, urlName };
+    return { url, apiUrl, friendlyName: model.friendlyName, urlName: model.urlName };
 }
