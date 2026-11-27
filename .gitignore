@@ -47,7 +47,7 @@ dist-electron/
 # Intermediate tsc output of `npm run build:electron` (copied into dist-electron/)
 /electron/dist/
 
-# Machine-local Claude Code settings
+# Machine-local agent settings
 .claude/settings.local.json
 
 # Agent research notes: kept locally, never committed
