@@ -67,7 +67,7 @@ if (!gotTheLock) {
         contextIsolation: true,
         preload: preloadPath,
         sandbox: true,
-        webSecurity: false // Disable web security in development for easier API access
+        webSecurity: true
       }
     });
 
