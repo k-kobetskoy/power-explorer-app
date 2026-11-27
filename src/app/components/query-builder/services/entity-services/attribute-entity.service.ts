@@ -198,7 +198,7 @@ export class AttributeEntityService extends BaseRequestService {
         const entityObservables: Observable<void>[] = entityLogicalNames.map(entityLogicalName => {
           return new Observable<void>(subscriber => {
             // Get ALL attributes for this entity without filtering
-            this.getAttributes(entityLogicalName).subscribe({
+            this.getAttributes(entityLogicalName).pipe(take(1)).subscribe({
               next: (attributes) => {
                 try {
                   // Create a Map with ALL attributes
@@ -365,7 +365,7 @@ export class AttributeEntityService extends BaseRequestService {
             }
 
             // Get attributes for this entity
-            this.getAttributes(entityLogicalName).subscribe({
+            this.getAttributes(entityLogicalName).pipe(take(1)).subscribe({
               next: (attributes) => {
                 try {
                   // Filter to requested attributes

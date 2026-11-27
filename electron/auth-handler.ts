@@ -1,7 +1,8 @@
-import { BrowserWindow, ipcMain, shell } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import { PublicClientApplication, LogLevel, AuthenticationResult, SilentFlowRequest, Configuration, AccountInfo, ICachePlugin } from '@azure/msal-node';
 import Store from 'electron-store';
 import IpcChannels from './ipc-channels';
+import { openExternalLink } from './external-links';
 import { EnvironmentModel, AuthResponse, TokenResponse, EnvironmentsResponse, GenericResponse } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -31,7 +32,7 @@ class PersistentCachePlugin implements ICachePlugin {
                 console.log('[AUTH-HANDLER] No MSAL cache file exists yet');
             }
         } catch (error) {
-            console.error('[AUTH-HANDLER] Error loading MSAL cache:', error);
+            console.error('[AUTH-HANDLER] Error loading MSAL cache:', (error as Error)?.name);
         }
     }
 
@@ -86,7 +87,6 @@ class AuthHandler {
         try {
             // Get active environment from store
             const activeEnv = this.getActiveEnvironment();
-            console.log('[AUTH-HANDLER: INIT] Active environment:', activeEnv);
 
             if (activeEnv) {
                 this.initializeMsal();
@@ -104,7 +104,6 @@ class AuthHandler {
                     try {
                         // Get account from store
                         const activeAccount = await this.getActiveAccount();
-                        console.log('[AUTH-HANDLER: INIT] Active account:', activeAccount);
                         if (activeAccount) {
                             // Get environment-specific scopes
                             const scopes = [`${activeEnv.apiUrl}/user_impersonation`];
@@ -153,10 +152,11 @@ class AuthHandler {
                 system: {
                     loggerOptions: {
                         loggerCallback: (level, message, containsPii) => {
+                            if (containsPii) return;
                             console.log(`[MSAL-${level}] ${message}`);
                         },
                         piiLoggingEnabled: false,
-                        logLevel: LogLevel.Verbose,
+                        logLevel: app.isPackaged ? LogLevel.Error : LogLevel.Warning,
                     },
                 },
                 cache: {
@@ -180,7 +180,6 @@ class AuthHandler {
                 this.updateStoredEnvironments(environmentModel);
 
                 // Make sure to save the account immediately
-                console.log('[AUTH-HANDLER: IPC-LOGIN] Setting active account after login:', result.account);
                 this.storeActiveAccount(result.account);
 
                 return { success: true, account: result.account, accessToken: result.accessToken };
@@ -497,10 +496,12 @@ class AuthHandler {
         </html>
       `;
 
-            // Browser open function - use shell.openExternal
+            // Browser open function
             const openBrowser = async (url: string) => {
-                console.log('[AUTH-HANDLER: LOGIN] Opening browser with URL:', url);
-                await shell.openExternal(url);
+                console.log('[AUTH-HANDLER: LOGIN] Opening browser for sign-in');
+                if (!await openExternalLink(url)) {
+                    throw new Error('Could not open the sign-in page');
+                }
             };
 
             // Create a promise that will be resolved when the auth redirect is handled
@@ -581,7 +582,7 @@ class AuthHandler {
                 };
 
                 const response = await this.pca.acquireTokenSilent(silentRequest);
-                console.log('[AUTH-HANDLER: GET-TOKEN] Acquired token silently:', response.accessToken);
+                console.log('[AUTH-HANDLER: GET-TOKEN] Acquired token silently');
                 return response.accessToken;
             } catch (error) {
                 // Continue with interactive authentication flow below
@@ -593,7 +594,6 @@ class AuthHandler {
             const result = await this.login(environmentModel);
 
             // Store the account immediately after successful login
-            console.log('[AUTH-HANDLER] Setting active account after login:', result.account);
             this.storeActiveAccount(result.account);
             
             this.updateStoredEnvironments(environmentModel);
@@ -680,7 +680,6 @@ class AuthHandler {
             // First try to get the active account ID from store
             const activeAccountId = this.store.get('activeAccountId', null) as string;
             
-            console.log('[AUTH-HANDLER: GET-ACTIVE-ACCOUNT] Active account ID:', activeAccountId);
             if (!activeAccountId || !this.pca) {
                 return null;
             }
@@ -690,7 +689,6 @@ class AuthHandler {
             
             // Find the account that matches the stored ID
             const msalAccount = accounts.find(account => account.homeAccountId === activeAccountId) || null;
-            console.log('[AUTH-HANDLER: GET-ACTIVE-ACCOUNT] Active account:', msalAccount);
             
             // Create a clean version of the account for IPC transfer
             if (msalAccount) {
@@ -703,7 +701,6 @@ class AuthHandler {
                     name: msalAccount.name
                 };
                 
-                console.log('[AUTH-HANDLER: GET-ACTIVE-ACCOUNT] Clean account for IPC:', cleanAccount);
                 return cleanAccount;
             }
             
@@ -717,12 +714,11 @@ class AuthHandler {
     storeActiveAccount(account: AccountInfo): void {
         try {
             if (!account || !account.homeAccountId) {
-                console.error('[AUTH-HANDLER: SET-ACTIVE-ACCOUNT] Invalid account:', account);
+                console.error('[AUTH-HANDLER: SET-ACTIVE-ACCOUNT] Invalid account');
                 return;
             }
             
             // Store just the account ID instead of the full object
-            console.log('[AUTH-HANDLER: SET-ACTIVE-ACCOUNT] Storing account ID:', account.homeAccountId);
             this.store.set('activeAccountId', account.homeAccountId);
             
             // Force immediate save to disk
@@ -742,7 +738,6 @@ class AuthHandler {
             };
             
             // Emit account changed event to renderer process
-            console.log('[AUTH-HANDLER: SET-ACTIVE-ACCOUNT] Sending account to renderer:', cleanAccount);
             this.mainWindow.webContents.send('account-changed', cleanAccount);
         } catch (error) {
             console.error('[AUTH-HANDLER] Error setting active account:', error);
