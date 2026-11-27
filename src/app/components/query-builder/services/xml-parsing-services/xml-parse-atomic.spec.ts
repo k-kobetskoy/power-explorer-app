@@ -74,6 +74,10 @@ describe('XmlParseService: atomic Parse, escaping and validation', () => {
       'a tag that is not supported': '<fetch>\n  <entity name="contact">\n    <all-attributes />\n  </entity>\n</fetch>',
       'two root elements': '<fetch>\n  <entity name="contact" />\n</fetch>\n<fetch />',
       'empty text': '   ',
+      'text after the root element': '<fetch>\n  <entity name="contact" />\n</fetch>junk',
+      'text before the root element': 'junk<fetch>\n  <entity name="contact" />\n</fetch>',
+      'an unknown entity in an attribute': '<fetch>\n  <entity name="&nbsp;" />\n</fetch>',
+      'an unknown entity in value text': '<fetch><entity name="a"><filter><condition attribute="b" operator="in"><value>&nbsp;</value></condition></filter></entity></fetch>',
     };
 
     for (const [name, text] of Object.entries(rejected)) {
@@ -181,6 +185,12 @@ describe('XmlParseService: atomic Parse, escaping and validation', () => {
       expect(xmlEmissions).toBe(1);
       expect(nodeTreeService.xmlRequest$.value).toBe(validQuery);
       xmlSub.unsubscribe();
+      flush();
+    }));
+
+    it('allows an XML declaration, comments and blank lines around the root element', fakeAsync(() => {
+      const result = parse('<?xml version="1.0"?>\n<!-- before &nbsp; -->\n<fetch>\n  <entity name="account" />\n</fetch>\n<!-- after -->\n');
+      expect(result.errors).toEqual([]);
       flush();
     }));
 
