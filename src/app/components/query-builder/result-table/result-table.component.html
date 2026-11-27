@@ -25,7 +25,7 @@
 
         <!-- Table content shown only when data is available -->
         <div class="table-container" *ngIf="dataSource && dataSource.length > 0; else noData">
-          <div class="table-scroll-container">
+          <div class="table-scroll-container" #tableScroll>
             <table mat-table [dataSource]="paginatedData" class="mat-elevation-z0 full-size-table">
               <ng-container *ngFor="let column of displayedColumns" [matColumnDef]="column">
                 <th mat-header-cell *matHeaderCellDef>{{getColumnDisplayName(column)}}</th>
@@ -91,11 +91,23 @@
             </table>
           </div>
 
-          <!-- Paginator -->
-          <mat-paginator [length]="totalRows" [pageSize]="pageSize" [pageSizeOptions]="pageSizeOptions"
-            [pageIndex]="pageIndex" (page)="onPageChange($event)" showFirstLastButtons
-            aria-label="Select page of results">
-          </mat-paginator>
+          <div class="table-footer">
+            <!-- Shown while the result is incomplete -->
+            <div class="more-rows" *ngIf="continuation">
+              <span>{{totalRows}} rows loaded, more are available</span>
+              <button mat-stroked-button type="button" class="load-more" *ngIf="canLoadMore; else otherEnvironment"
+                [disabled]="isLoadingMore" (click)="loadMore()">{{isLoadingMore ? 'Loading…' : 'Load more'}}</button>
+              <ng-template #otherEnvironment>
+                <span>Environment changed: run the query again to load the rest</span>
+              </ng-template>
+            </div>
+
+            <!-- Paginator -->
+            <mat-paginator [length]="totalRows" [pageSize]="pageSize" [pageSizeOptions]="pageSizeOptions"
+              [pageIndex]="pageIndex" (page)="onPageChange($event)" showFirstLastButtons
+              aria-label="Select page of results">
+            </mat-paginator>
+          </div>
         </div>
 
         <ng-template #noData>
