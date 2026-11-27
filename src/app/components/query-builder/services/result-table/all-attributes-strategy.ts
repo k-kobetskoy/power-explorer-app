@@ -267,15 +267,6 @@ export class AllAttributesStrategy implements IResultProcessingStrategy {
      );
    }
 
-  processResults(
-    result: any,
-    entityAttributeMap: EntityAttributeMap,
-    attributeMaps?: { [entityLogicalName: string]: Map<string, AttributeModel> }
-  ): any {
-    // For AllAttributesStrategy, no additional processing needed
-    return result;
-  }
-
   /**
    * Load all attributes for the given entities using the AttributeEntityService
    */
