@@ -4,7 +4,6 @@ import { Subject, BehaviorSubject } from 'rxjs';
 import { distinctUntilChanged, takeUntil } from 'rxjs/operators';
 import { AttributeNames } from 'src/app/components/query-builder/models/constants/attribute-names';
 import { AttributeData } from '../../models/constants/attribute-data';
-import { FilterStaticData } from '../../models/constants/ui/filter-static-data';
 import { QueryNode } from '../../models/query-node';
 import { BaseFormComponent } from './base-form.component';
 import { MultiValueNodesService } from '../../services/multi-value-nodes.service';

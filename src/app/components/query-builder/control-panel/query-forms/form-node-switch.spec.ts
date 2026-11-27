@@ -214,6 +214,24 @@ describe('Query forms when the selected node changes', () => {
       finish();
     }));
 
+    it('applies an attribute picked from the suggestion list', fakeAsync(() => {
+      const condition = addCondition(entity, 'name', 'like', 'x%');
+      select(condition);
+
+      const input = typeInto(attributeInput, 'cit');
+      input.dispatchEvent(new Event('focusin'));
+      settle();
+      const option = Array.from(document.querySelectorAll<HTMLElement>('mat-option'))
+        .find(element => element.textContent.trim() === 'city');
+      option.click();
+      settle();
+
+      expect(value(condition, 'attribute')).toBe('city');
+      expect(value(condition, 'operator')).toBe('eq');
+      expect(value(condition, 'value')).toBeUndefined();
+      finish();
+    }));
+
     it('keeps operator and value while a longer name passes through another attribute name', fakeAsync(() => {
       const condition = addCondition(entity, 'city', 'like', 'x%');
       select(condition);
@@ -296,17 +314,19 @@ describe('Query forms when the selected node changes', () => {
     it('reads the relationship list from one shared stream', fakeAsync(() => {
       const link = nodeTree.addNode(QueryNodeData.Link.NodeName, entity);
       select(link);
-      const stream = find(LinkEntityFormComponent).filteredLinkEntities$;
+      const form = find(LinkEntityFormComponent);
 
       let first: unknown;
       let second: unknown;
-      firstValueFrom(stream).then(result => first = result);
-      const subscription = stream.subscribe();
-      firstValueFrom(stream).then(result => second = result);
-      tick();
+      const subscriptions = [
+        form.filteredLinkEntities$.subscribe(result => first = result),
+        form.filteredLinkEntities$.subscribe(result => second = result),
+      ];
+      // A search term makes the filter build a new object on every run of the pipeline
+      form.linkEntityFormControl.setValue('acc');
 
       expect(second).toBe(first);
-      subscription.unsubscribe();
+      subscriptions.forEach(subscription => subscription.unsubscribe());
       finish();
     }));
   });
