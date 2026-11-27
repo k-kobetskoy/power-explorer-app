@@ -41,6 +41,7 @@ export class EntityEntityService extends BaseRequestService {
         }
 
         return this.getInFlightRequest(key, envUrl).pipe(
+          this.waitForSignIn(this.getEntitiesIsLoading$),
           tap(() => isLoading ? this.getEntitiesIsLoading$.next(false) : null)
         );
       })
