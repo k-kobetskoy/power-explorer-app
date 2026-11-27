@@ -1,5 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron';
-import { PublicClientApplication, InteractionRequiredAuthError, LogLevel, AuthenticationResult, Configuration, AccountInfo, ICachePlugin } from '@azure/msal-node';
+import { PublicClientApplication, InteractionRequiredAuthError, ServerError, LogLevel, AuthenticationResult, Configuration, AccountInfo, ICachePlugin } from '@azure/msal-node';
 import Store from 'electron-store';
 import IpcChannels from './ipc-channels';
 import { openExternalLink } from './external-links';
@@ -12,6 +12,12 @@ import { app } from 'electron';
 // Custom protocol for deep linking
 const APP_PROTOCOL = 'powerexplorer';
 const DEEP_LINK_URL = `${APP_PROTOCOL}://auth`;
+
+// MSAL error codes for a request that got no usable answer from Microsoft
+const NETWORK_ERROR_CODES = ['network_error', 'endpoints_resolution_error', 'openid_config_error'];
+// OAuth codes by which Microsoft declines this account or application. A list of what counts, not of
+// what does not: after an outage or throttling MSAL replays the failure with an empty or numeric code
+const REFUSAL_ERROR_CODES = ['invalid_resource', 'invalid_client', 'unauthorized_client', 'invalid_scope', 'invalid_request', 'access_denied'];
 
 // Persistent cache plugin for MSAL
 class PersistentCachePlugin implements ICachePlugin {
@@ -533,7 +539,8 @@ class AuthHandler {
         }
     }
 
-    // Never opens the browser. A failure that is not about the session (network, server) stays an error
+    // Never opens the browser. `refused` marks an answer where Microsoft declined this account,
+    // which a sign-in may fix; network failures and outages are plain errors
     async getToken(environmentModel: EnvironmentModel): Promise<TokenResponse> {
         const activeAccount = await this.getActiveAccount();
         if (!activeAccount) {
@@ -554,7 +561,14 @@ class AuthHandler {
                 return { success: false, loginRequired: true };
             }
             console.warn('[AUTH-HANDLER: GET-TOKEN] Silent token request failed:', errorCode || (error as Error)?.name);
-            return { success: false, error: 'Could not get an access token. Check your network connection.' };
+
+            if (NETWORK_ERROR_CODES.includes(errorCode)) {
+                return { success: false, error: 'Could not get an access token. Check your network connection.' };
+            }
+            if (error instanceof ServerError && REFUSAL_ERROR_CODES.includes(errorCode)) {
+                return { success: false, refused: true, error: `Microsoft refused to issue a token for this environment (${errorCode}).` };
+            }
+            return { success: false, error: `Could not get an access token (${errorCode || 'unknown error'}).` };
         }
     }
 
@@ -714,8 +728,9 @@ class AuthHandler {
         try {            
             const token = await this.getToken(environmentModel);
 
-            if (token.loginRequired) {
-                // Connecting is the user's own action, so signing in here is expected
+            if (token.loginRequired || token.refused) {
+                // Connecting is the user's own action, so signing in here is expected.
+                // A refusal can mean the active account belongs to another tenant
                 await this.login(environmentModel);
             } else if (!token.success) {
                 return false;

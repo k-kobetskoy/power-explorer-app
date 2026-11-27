@@ -12,6 +12,7 @@ import { NotificationService } from './notification.service';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ElectronService, TokenResponse } from './electron.service';
 import { ErrorDialogService } from './error-dialog.service';
+import { isSameEnvironment } from './environment-url';
 
 @Injectable({ providedIn: 'root' })
 
@@ -204,7 +205,12 @@ export class DesktopAuthService {
       tap(result => {
         if (result.success) {
           this.activeAccount.next(result.account);
-          this.activeEnvironmentModel.next(environmentModel);
+          // Publishing the environment again re-sends the requests that were waiting for this sign-in.
+          // If the user moved to another environment or logged out meanwhile, leave that as it is
+          const current = this.activeEnvironmentModel.value;
+          if (current && isSameEnvironment(current, environmentModel)) {
+            this.activeEnvironmentModel.next(current);
+          }
           this.eventBus.emit(new EventData(AppEvents.LOGIN_SUCCESS, null));
           this.notificationService.showSuccess(`Successfully logged in to ${environmentModel.friendlyName}`);
         } else {

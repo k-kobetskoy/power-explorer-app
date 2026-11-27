@@ -30,6 +30,7 @@ export interface TokenResponse {
   success: boolean;
   accessToken?: string;
   loginRequired?: boolean; // no token until the user signs in again
+  refused?: boolean; // Microsoft declined this account; signing in with another may help
   error?: string;
 }
 
