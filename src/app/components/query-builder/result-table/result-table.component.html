@@ -49,7 +49,12 @@
                   <ng-template #normalCell>
                     <!-- No. column is handled differently -->
                     <ng-container *ngIf="column === 'No.'; else attributeCell">
-                      <span [innerHTML]="formatCellValue(element, column)"></span>
+                      <span>
+                          <a *ngIf="element['__rowData']?.dataverseRowLink; else rowNumber" href="javascript:void(0)"
+                            (click)="openExternalLink(element['__rowData'].dataverseRowLink)"
+                            class="row-number-link">{{element[column]}}</a>
+                          <ng-template #rowNumber>{{element[column]}}</ng-template>
+                        </span>
                     </ng-container>
 
                     <!-- Attribute cell with special handling -->
