@@ -336,12 +336,6 @@ tr.mat-mdc-row:hover {
   text-decoration: underline;
 }
 
-.link-cell {
-  text-align: center !important;
-  vertical-align: middle !important;
-  padding: 0 !important;
-}
-
 /* Style for raw view links */
 .raw-link {
   color: #6a9955; /* Green color to distinguish from formatted view */

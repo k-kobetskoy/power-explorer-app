@@ -3,8 +3,6 @@ import { ChangeDetectionStrategy, Component, OnInit, ViewEncapsulation } from '@
 import { Observable } from 'rxjs';
 
 import { QueryNodeTree } from 'src/app/components/query-builder/models/query-node-tree';
-import { AppEvents } from 'src/app/services/event-bus/app-events';
-import { EventBusService } from 'src/app/services/event-bus/event-bus.service';
 import { NodeTreeService } from '../services/node-tree.service';
 import { QueryNode } from '../models/query-node';
 import { CommonModule } from '@angular/common';
@@ -29,7 +27,6 @@ dataSource$: Observable<QueryNodeTree>
 selectedNode$: Observable<QueryNode>
 
 constructor(
-  private eventBus: EventBusService,
   private nodeTreeProcessor: NodeTreeService) { }
 
 ngOnInit() {

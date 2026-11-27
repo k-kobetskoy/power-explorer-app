@@ -55,8 +55,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
 
   onAboutClick() {
-    console.log('About clicked');
-
     const dialogConfig = new MatDialogConfig();
     dialogConfig.width = '980px';
     dialogConfig.height = '610px';

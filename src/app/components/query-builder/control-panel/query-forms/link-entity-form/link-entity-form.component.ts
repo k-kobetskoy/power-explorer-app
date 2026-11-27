@@ -369,8 +369,6 @@ export class LinkEntityFormComponent extends BaseFormComponent implements OnDest
         if (relation.ReferencedAttribute) {
           this.toAttributeFormControl.setValue(relation.ReferencedAttribute);
         }
-        // Set alias name if needed
-        //this.aliasFormControl.setValue(this.getAliasName(relation.ReferencingEntityName, relation.ReferencedAttribute));
 
       } else if (relation.RelationshipType === RelationshipType.ManyToOne) {
 
@@ -381,8 +379,6 @@ export class LinkEntityFormComponent extends BaseFormComponent implements OnDest
         if (relation.ReferencingAttribute) {
           this.toAttributeFormControl.setValue(relation.ReferencingAttribute);
         }
-        // Set alias name if needed 
-        //this.aliasFormControl.setValue(this.getAliasName(relation.ReferencedEntityName, relation.ReferencingAttribute));
       }
     }
   }

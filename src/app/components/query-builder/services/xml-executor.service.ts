@@ -22,21 +22,6 @@ interface FetchXmlQueryOptions {
   includeLinkedEntities?: boolean;
 }
 
-export interface FieldTypeInfo {
-  value: any;
-  type: string;
-  displayName?: string;
-  FormattedValue?: string;
-  associatednavigationproperty?: string;
-  lookuplogicalname?: string;
-  entityLogicalName?: string;
-  [key: string]: any; // For any additional annotations
-}
-
-export interface TypedResultItem {
-  [key: string]: any | FieldTypeInfo;
-}
-
 export interface HeaderMetadata {
   displayName: string;
   logicalName: string;
@@ -47,14 +32,6 @@ export interface MatTableRawData {
   header: { [key: string]: HeaderMetadata };
   rows: RowData[];
   __original_data?: any[];
-}
-
-export interface XmlExecutionResult {
-  header: { [key: string]: HeaderMetadata };
-  rawValues: any[];
-  formattedValues: any[];
-  linkValues?: any[]; // Add support for link values used by the result table
-  __original_data?: any[]; // Original data from the API response for reference
 }
 
 /** What is needed to request the next page and to shape it like the pages before it. */

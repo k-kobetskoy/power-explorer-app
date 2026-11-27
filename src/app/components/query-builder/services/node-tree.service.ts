@@ -1,8 +1,6 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable, of, Subject, Subscription } from 'rxjs';
 import { QueryNodeTree } from '../models/query-node-tree';
-import { AppEvents } from 'src/app/services/event-bus/app-events';
-import { EventBusService } from 'src/app/services/event-bus/event-bus.service';
 import { QueryNode } from '../models/query-node';
 import { QueryNodeData } from '../models/constants/query-node-data';
 import { ConditionAttributeData, ValueAttributeData } from '../models/constants/attribute-data';
@@ -47,13 +45,10 @@ export class NodeTreeService {
   }
 
   constructor(
-    private _eventBus: EventBusService,
     private nodeFactory: NodeFactoryService,
     private validationService: ValidationService
   ) {
     this.initializeNodeTree();
-
-    this._eventBus.on(AppEvents.ENVIRONMENT_CHANGED, () => this.initializeNodeTree());
 
     this.setupValidation();
   }
@@ -136,7 +131,6 @@ export class NodeTreeService {
     // Explicitly emit from nodeTree$ to ensure validation is triggered
     this._nodeTree$.next(this._nodeTree$.value);
 
-    this._eventBus.emit({ name: AppEvents.NODE_ADDED });
     this._treeChanged$.next();
 
     if (newNodeName === QueryNodeData.Filter.NodeName) {
@@ -171,7 +165,6 @@ export class NodeTreeService {
     }
 
     this.expandNode(parentConditionNode);
-    this._eventBus.emit({ name: AppEvents.NODE_ADDED });
 
     this._nodeTree$.next(this._nodeTree$.value);
     this._treeChanged$.next();
@@ -232,7 +225,6 @@ export class NodeTreeService {
     // Explicitly emit from nodeTree$ to ensure validation is updated after node removal
     this._nodeTree$.next(this._nodeTree$.value);
 
-    this._eventBus.emit({ name: AppEvents.NODE_REMOVED });
     this._treeChanged$.next();
   }
 
