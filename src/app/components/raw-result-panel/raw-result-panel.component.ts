@@ -13,9 +13,6 @@ import { autocompletion, completionKeymap, closeBrackets } from "@codemirror/aut
 import { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, foldGutter } from "@codemirror/language";
 import { powerExplorerTheme } from '../query-builder/code-editor/code-editor.theme';
 
-// Import theme from code-editor if available, otherwise use oneDark
-// import { powerExplorerTheme, foldGutterStyle, customFoldGutter } from '../query-builder/code-editor/code-editor.theme';
-
 @Component({
   selector: 'app-raw-result-panel',
   templateUrl: './raw-result-panel.component.html',

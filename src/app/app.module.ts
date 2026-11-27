@@ -4,10 +4,6 @@ import { NgModule } from '@angular/core';
 import { provideHttpClient, withInterceptorsFromDi, HTTP_INTERCEPTORS } from '@angular/common/http';
 import { AppRoutingModule } from './app-routing.module';
 import { AppComponent } from './app.component';
-import { MainToolbarComponent } from './components/toolbar/main-toolbar/main-toolbar.component';
-import { MenuComponent } from './components/toolbar/menu/menu.component';
-import { NodeStyleDirective } from './directives/node-style.directive';
-import { ExternalLinkDirective } from './directives/external-link.directive';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ValidationService } from './components/query-builder/services/validation.service';
 import { ErrorDialogComponent } from './components/error-dialog/error-dialog.component';
@@ -44,9 +40,6 @@ const isElectron = window && window['electron'] !== undefined;
 @NgModule({
   declarations: [
     AppComponent,
-    MenuComponent,
-    NodeStyleDirective,
-    ExternalLinkDirective,
     ErrorDialogComponent,
     AuthCallbackComponent,
   ],
@@ -73,8 +66,7 @@ const isElectron = window && window['electron'] !== undefined;
     MatSelectModule,
     MatSlideToggleModule,
     ReactiveFormsModule,
-    MatTableModule,
-    MainToolbarComponent
+    MatTableModule
   ],
   providers: [
     { provide: MAT_FORM_FIELD_DEFAULT_OPTIONS, useValue: { appearance: 'outline' } },

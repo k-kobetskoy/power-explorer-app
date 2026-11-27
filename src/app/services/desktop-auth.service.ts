@@ -2,14 +2,11 @@ import { Inject, Injectable, NgZone } from '@angular/core';
 
 import { BehaviorSubject, Observable, from, of } from 'rxjs';
 import { map, catchError, tap, finalize, switchMap } from 'rxjs/operators';
-import { EventBusService } from './event-bus/event-bus.service';
-import { EventData } from './event-bus/event-data';
-import { AppEvents } from './event-bus/app-events';
 import { ACTIVE_ENVIRONMENT_MODEL, ACTIVE_ACCOUNT_MODEL } from '../models/tokens';
 import { EnvironmentModel } from '../models/environment-model';
 import { AccountInfo } from '@azure/msal-browser';
 import { NotificationService } from './notification.service';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute } from '@angular/router';
 import { ElectronService, TokenResponse } from './electron.service';
 import { ErrorDialogService } from './error-dialog.service';
 import { isSameEnvironment } from './environment-url';
@@ -24,9 +21,7 @@ export class DesktopAuthService {
     @Inject(ACTIVE_ENVIRONMENT_MODEL) private activeEnvironmentModel: BehaviorSubject<EnvironmentModel>,
     @Inject(ACTIVE_ACCOUNT_MODEL) private activeAccount: BehaviorSubject<AccountInfo>,
     private electronService: ElectronService,
-    private eventBus: EventBusService,
     private notificationService: NotificationService,
-    private router: Router,
     private route: ActivatedRoute,
     private errorDialogService: ErrorDialogService,
     private ngZone: NgZone
@@ -50,32 +45,6 @@ export class DesktopAuthService {
         this.activeAccount.next(account);
       } else {
         this.activeAccount.next(null);
-        this.eventBus.emit(new EventData(AppEvents.USER_REMOVED, null));
-      }
-    });
-
-    // Listen for auth success/failure messages
-    this.listen('auth-success', (data: { account: AccountInfo }) => {
-      if (data && data.account) {
-        this.activeAccount.next(data.account);
-        this.eventBus.emit(new EventData(AppEvents.LOGIN_SUCCESS, null));
-        this.notificationService.showSuccess('Login successful');
-        // Navigate to home or dashboard
-        this.router.navigate(['/']);
-      }
-    });
-
-    this.listen('auth-failed', (data: { error: string, errorDescription: string }) => {
-      console.error('[ELECTRON-AUTH] Authentication failed:', data?.error);
-      this.notificationService.showError(`Login failed: ${data.errorDescription || data.error || 'Unknown error'}`);
-    });
-
-    // Listen for app returned from auth event. The sign-in reports its own outcome,
-    // so no notification here: it would replace that one, a failure included
-    this.listen('app-returned-from-auth', () => {
-      // If we already have an active account, no need to do anything else
-      if (this.activeAccount.value) {
-        this.eventBus.emit(new EventData(AppEvents.LOGIN_SUCCESS, null));
       }
     });
   }
@@ -211,7 +180,6 @@ export class DesktopAuthService {
           if (current && isSameEnvironment(current, environmentModel)) {
             this.activeEnvironmentModel.next(current);
           }
-          this.eventBus.emit(new EventData(AppEvents.LOGIN_SUCCESS, null));
           this.notificationService.showSuccess(`Successfully logged in to ${environmentModel.friendlyName}`);
         } else {
           this.notificationService.showError(`Login failed: ${result.error || 'Unknown error'}`);
@@ -272,14 +240,12 @@ export class DesktopAuthService {
       tap(result => {
         this.activeAccount.next(null);
         this.activeEnvironmentModel.next(null);
-        this.eventBus.emitAndSaveLast(new EventData(AppEvents.USER_REMOVED, null));
         this.notificationService.showInfo('You have been logged out');
       }),
       map(result => true), 
       catchError(error => {
         this.activeAccount.next(null);
         this.activeEnvironmentModel.next(null);
-        this.eventBus.emitAndSaveLast(new EventData(AppEvents.USER_REMOVED, null));
         this.notificationService.showInfo('You have been logged out');
         return of(true); // Always consider logout successful
       })

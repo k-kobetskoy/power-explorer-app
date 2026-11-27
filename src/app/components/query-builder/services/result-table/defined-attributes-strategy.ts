@@ -1,4 +1,4 @@
-import { HeaderMetadata, MatTableRawData, XmlExecutionResult } from '../xml-executor.service';
+import { HeaderMetadata, MatTableRawData } from '../xml-executor.service';
 import { EntityAttributeMap, AttributeEntityService, AttributeMapResult, EntityAttributeData } from '../entity-services/attribute-entity.service';
 import { IResultProcessingStrategy } from './i-result-processing-strategy';
 import { AttributeModel } from 'src/app/models/incoming/attrubute/attribute-model';
@@ -38,16 +38,6 @@ export class DefinedAttributesStrategy implements IResultProcessingStrategy {
         });
       })
     );
-  }
-
-  processResults(
-    result: XmlExecutionResult,
-    entityAttributeMap: EntityAttributeMap,
-    attributeMaps?: { [entityLogicalName: string]: Map<string, AttributeModel> }
-  ): XmlExecutionResult {
-    // This method is for processing within the service chain
-    // Just return the result as we'll do the actual processing in processRawData
-    return result;
   }
 
   // Internal method to do the actual processing

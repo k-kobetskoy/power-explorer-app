@@ -1,9 +1,8 @@
-import { Component, EventEmitter, OnInit, Output, OnDestroy, ViewEncapsulation, ChangeDetectionStrategy, ChangeDetectorRef, Inject, ElementRef, ViewChild } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewEncapsulation, ChangeDetectionStrategy, ChangeDetectorRef, Inject, ElementRef, ViewChild } from '@angular/core';
 import {  Subscription, takeUntil, tap, Subject, BehaviorSubject } from 'rxjs';
 import { ExecutionState, MatTableRawData, QueryContinuation, XmlExecutorService } from '../services/xml-executor.service';
 import { DEFAULT_PAGE_SIZE_OPTIONS, FALLBACK_PAGE_SIZE, PageSizePreference, fitPageSize } from './page-size';
 import { MatButtonModule } from '@angular/material/button';
-import { NodeTreeService } from '../services/node-tree.service';
 import { QueryNode } from '../models/query-node';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -76,8 +75,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
 
   @ViewChild('tableScroll') private tableScroll: ElementRef<HTMLElement>;
 
-  // Track current environment URL
-  private currentEnvironmentUrl: string = '';
   private environmentSubscription: Subscription;
 
   // Add destroy$ Subject
@@ -85,7 +82,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
   
   constructor(
     private xmlExecutor: XmlExecutorService,
-    private nodeTreeService: NodeTreeService,
     private cdr: ChangeDetectorRef,
     private externalLinkService: ExternalLinkService,
     private pageSizePreference: PageSizePreference,
@@ -93,7 +89,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
   ) {
     this.destroy$ = new Subject<void>();
   }
-  @Output() resultTableGetResult = new EventEmitter<void>();
 
   ngOnInit() {
 
@@ -108,29 +103,12 @@ export class ResultTableComponent implements OnInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(state => this.applyState(state));
 
-    // Subscribe to environment changes for URL building
+    // Subscribe to environment changes
     this.environmentSubscription = this.activeEnvironmentModel
       .pipe(takeUntil(this.destroy$))
       .subscribe(env => {
         if (env && env.apiUrl) {
-          // Convert API URL to web client URL
-          this.currentEnvironmentUrl = env.url.replace('.api.', '.');
-
-          // Clean up URL format
-          if (this.currentEnvironmentUrl.endsWith('/api/data/v9.2/')) {
-            this.currentEnvironmentUrl = this.currentEnvironmentUrl.replace('/api/data/v9.2/', '/');
-          } else if (this.currentEnvironmentUrl.endsWith('/api/data/v9.1/')) {
-            this.currentEnvironmentUrl = this.currentEnvironmentUrl.replace('/api/data/v9.1/', '/');
-          } else if (this.currentEnvironmentUrl.endsWith('/api/data/v9.0/')) {
-            this.currentEnvironmentUrl = this.currentEnvironmentUrl.replace('/api/data/v9.0/', '/');
-          }
-
-          // Ensure URL ends with slash
-          if (!this.currentEnvironmentUrl.endsWith('/')) {
-            this.currentEnvironmentUrl += '/';
-          }
-          
-          // If we already have results, refresh data source to update URLs
+          // If we already have results, refresh the data source
           if (this.resultData && this.resultData.rows?.length > 0) {
             this.refreshDataSource();
           }
@@ -147,20 +125,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     // Complete the destroy$ Subject
     this.destroy$.next();
     this.destroy$.complete();
-  }
-
-  getResult() {
-    // Check if we have a stored result already
-    if (this.resultData && this.resultData.rows && this.resultData.rows.length > 0) {
-      this.processResultData();
-      this.cdr.markForCheck();
-      return;
-    }
-
-    // Emit the event for parent components to handle
-    this.resultTableGetResult.emit();
-
-    this.executeWithData(this.nodeTreeService.xmlRequest$.value, this.getEntityNode());
   }
 
   private applyState(state: ExecutionState) {
@@ -226,7 +190,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
       return;
     }
 
-   // this.dataSourceSubject.next(this.resultData);
     // Reset cell selection when new data is loaded
     this.selectedOverflowCell = null;
     this.selectedColumn = null;
@@ -305,10 +268,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     this.pageSizeOptions = [...new Set([...DEFAULT_PAGE_SIZE_OPTIONS, pageSize])].sort((a, b) => a - b);
   }
 
-  private getEntityNode(): QueryNode {
-    return this.nodeTreeService.getNodeTree().value.root.next;
-  }
-
   selectRow(row: any) {
     // If clicking on the same row as previously selected, deselect it
     if (this.selectedRow === row) {
@@ -345,10 +304,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     
     // Force Angular to detect changes
     this.cdr.detectChanges();
-  }
-
-  isTextHidden(cell: HTMLElement): boolean {
-    return cell.scrollWidth > cell.clientWidth;
   }
 
   getFieldType(columnName: string): string {
@@ -388,8 +343,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
       case 'state':
       case 'status':
         return 'picklist';
-      case 'dynamicslink':
-        return 'dynamicslink';
       default:
         return 'string';
     }
@@ -444,8 +397,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
         return 'uniqueidentifier-cell';
       case 'picklist':
         return 'picklist-cell';
-      case 'dynamicslink':
-        return 'link-cell';
       default:
         return 'text-cell'; // Default styling
     }
@@ -473,34 +424,6 @@ export class ResultTableComponent implements OnInit, OnDestroy {
       // For technical values view, show the logical name
       return fieldInfo.logicalName || columnName;
     }
-  }
-
-  formatCellValue(row: any, columnName: string): string {
-    if (!this.resultData || !row) {
-      return row ? row[columnName]?.toString() || '' : '';
-    }
-
-    // For attributes in the new format
-    if (row.attributes && row.attributes.has(columnName)) {
-      const cellData = row.attributes.get(columnName);
-      
-      // Handle null or undefined values
-      if (!cellData || cellData.attributeRawValue === null || cellData.attributeRawValue === undefined) {
-        return '';
-      }
-      
-      // Handle link display
-      if (cellData.link) {
-        return '🔗 ' + (cellData.attributeFormattedValue || cellData.attributeRawValue);
-      }
-      
-      // Return formatted or raw value based on toggle
-      return this.showFormattedValues && cellData.attributeFormattedValue ? 
-        cellData.attributeFormattedValue : cellData.attributeRawValue.toString();
-    }
-    
-    // Fallback for direct access
-    return row[columnName]?.toString() || '';
   }
 
   hasFormattedValue(row: any, columnName: string): boolean {
