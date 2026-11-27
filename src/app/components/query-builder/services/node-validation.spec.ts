@@ -7,6 +7,7 @@ import { AttributeData } from '../models/constants/attribute-data';
 import { QueryNodeData } from '../models/constants/query-node-data';
 import { NodeAttribute } from '../models/node-attribute';
 import { QueryNode } from '../models/query-node';
+import { LinkAttributesFactoryService } from './attribute-services/attribute-factories/link-attributes-factory.service';
 import { NodeTreeService } from './node-tree.service';
 import { ValidationResult } from './validation.service';
 
@@ -24,12 +25,13 @@ describe('Node validation with environment metadata', () => {
       { LogicalName: 'contact', DisplayName: {}, EntitySetName: 'contacts' },
     ]
   };
-  const attributes = {
-    value: [
-      { LogicalName: 'name', DisplayName: {}, AttributeType: 'String' },
-      { LogicalName: 'accountid', DisplayName: {}, AttributeType: 'Uniqueidentifier' },
-    ]
-  };
+  const column = (LogicalName: string, AttributeType: string) => ({ LogicalName, DisplayName: {}, AttributeType });
+  const formColumns = [column('name', 'String'), column('parentcustomerid', 'Customer'), column('primarycontactid', 'Lookup')];
+  // As in Dataverse, primary keys are not valid for forms: a list filtered by IsValidForForm has none
+  const primaryKeys = [column('accountid', 'Uniqueidentifier'), column('contactid', 'Uniqueidentifier')];
+  const attributesFor = (url: string) => ({
+    value: url.includes('IsValidForForm eq true') ? formColumns : [...formColumns, ...primaryKeys]
+  });
 
   const isAttributesRequest = (url: string) => url.includes('/Attributes');
 
@@ -44,7 +46,7 @@ describe('Node validation with environment metadata', () => {
         const url = request.request.url;
         if (isAttributesRequest(url)) {
           urls.push(url);
-          request.flush(attributes);
+          request.flush(attributesFor(url));
         } else {
           request.flush(entities);
         }
@@ -109,6 +111,70 @@ describe('Node validation with environment metadata', () => {
 
     expect(linkResult()).toEqual({ isValid: false, errors: ['Please setup a valid parent entity'] });
     expect(treeResult.isValid).toBeFalse();
+    flush();
+  }));
+
+  for (const [from, to] of [['parentcustomerid', 'accountid'], ['contactid', 'primarycontactid']]) {
+    it(`accepts a join on a primary key (from="${from}" to="${to}")`, fakeAsync(() => {
+      const link = nodeTree.addNode(QueryNodeData.Link.NodeName, entity);
+      const result = watch(link);
+      link.setAttribute(AttributeData.Link.Entity, 'contact');
+      link.setAttribute(AttributeData.Link.From, from);
+      link.setAttribute(AttributeData.Link.To, to);
+
+      const urls = answerMetadata();
+
+      expect(urls.length).toBeGreaterThan(0);
+      expect(urls.filter(url => url.includes('IsValidForForm'))).toEqual([]);
+      expect(result()).toEqual({ isValid: true, errors: [] });
+      expect(treeResult.isValid).toBeTrue();
+      flush();
+    }));
+  }
+
+  it('accepts empty from and to, which are optional', fakeAsync(() => {
+    const link = nodeTree.addNode(QueryNodeData.Link.NodeName, entity);
+    const result = watch(link);
+    link.setAttribute(AttributeData.Link.Entity, 'contact');
+    link.setAttribute(AttributeData.Link.From, null);
+    link.setAttribute(AttributeData.Link.To, '');
+    answerMetadata();
+
+    expect(result()).toEqual({ isValid: true, errors: [] });
+    flush();
+  }));
+
+  it('clears the error of a parsed link-type once the value is fixed', fakeAsync(() => {
+    const link = nodeTree.addNode(QueryNodeData.Link.NodeName, entity);
+    const result = watch(link);
+    link.setAttribute(AttributeData.Link.Entity, 'contact');
+    // parserValidation = true: the attribute is created the way Parse creates it
+    link.addAttribute(TestBed.inject(LinkAttributesFactoryService)
+      .createAttribute(AttributeData.Link.Type.EditorName, link, true, 'innr'));
+    answerMetadata();
+    expect(result()).toEqual({ isValid: false, errors: ['Invalid link type.'] });
+    expect(treeResult.isValid).toBeFalse();
+
+    for (const linkType of ['inner', 'in']) {
+      link.setAttribute(AttributeData.Link.Type, linkType);
+      expect(result()).withContext(linkType).toEqual({ isValid: true, errors: [] });
+    }
+    expect(treeResult.isValid).toBeTrue();
+
+    link.setAttribute(AttributeData.Link.Type, 'oute');
+    expect(result().errors).toEqual(['Invalid link type.']);
+    flush();
+  }));
+
+  it('accepts a parsed documented link-type "in"', fakeAsync(() => {
+    const link = nodeTree.addNode(QueryNodeData.Link.NodeName, entity);
+    const result = watch(link);
+    link.setAttribute(AttributeData.Link.Entity, 'contact');
+    link.addAttribute(TestBed.inject(LinkAttributesFactoryService)
+      .createAttribute(AttributeData.Link.Type.EditorName, link, true, 'in'));
+    answerMetadata();
+
+    expect(result()).toEqual({ isValid: true, errors: [] });
     flush();
   }));
 

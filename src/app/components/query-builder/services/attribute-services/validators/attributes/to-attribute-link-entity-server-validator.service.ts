@@ -43,11 +43,9 @@ constructor(private attributeService: AttributeEntityService) { }
           parentName$
         ]).pipe(
           switchMap(([attributeName, { isValid, entityLogicalName }]) => {
+            // `to` is optional in FetchXML and an empty one is not rendered
             if (!attributeName) {
-              return of({
-                isValid: false,
-                errors: ['Please enter an attribute name']
-              });
+              return of(VALID_RESULT);
             }
   
             if (!isValid.isValid) {
@@ -60,7 +58,7 @@ constructor(private attributeService: AttributeEntityService) { }
             const attrName = attributeName.toString().trim();
             const entityName = entityLogicalName.toString().trim();
   
-            return this.attributeService.getAttributes(entityName).pipe(
+            return this.attributeService.getJoinAttributes(entityName).pipe(
               map((attributes: AttributeModel[]) => {
                 if (!attributes || attributes.length === 0) {
                   return {

@@ -20,19 +20,29 @@ export class ValidationService {
     constructor(private requiredNodeValidator: RequiredNodeValidatorService) { }
 
     setupNodeAttributeValidation(nodeAttribute: NodeAttribute): Observable<ValidationResult> {
-        if (nodeAttribute.parserValidation && nodeAttribute.validators.oneTimeValidators.length > 0) {
-            const oneTimeResults = nodeAttribute.validators.oneTimeValidators.map(validator => validator.validate(nodeAttribute));
+        if (nodeAttribute.parserValidation && nodeAttribute.validators.oneTimeValidators.length > 0
+            && !this.runOneTimeValidators(nodeAttribute).isValid) {
+            // The parsed value is wrong: check again whenever it changes, so that a fix clears the error
+            return nodeAttribute.value$.pipe(
+                map(() => this.runOneTimeValidators(nodeAttribute)),
+                switchMap(result => result.isValid ? this.setupReactiveAttributeValidation(nodeAttribute) : of(result)),
+                takeUntil(nodeAttribute.destroyed$)
+            );
+        }
 
-            const combinedResult = oneTimeResults.reduce((acc, result) => ({
+        return this.setupReactiveAttributeValidation(nodeAttribute);
+    }
+
+    private runOneTimeValidators(nodeAttribute: NodeAttribute): ValidationResult {
+        return nodeAttribute.validators.oneTimeValidators
+            .map(validator => validator.validate(nodeAttribute))
+            .reduce((acc, result) => ({
                 isValid: acc.isValid && result.isValid,
                 errors: [...acc.errors, ...result.errors]
             }), VALID_RESULT);
+    }
 
-            if (!combinedResult.isValid) {
-                return of(combinedResult);
-            }
-        }
-
+    private setupReactiveAttributeValidation(nodeAttribute: NodeAttribute): Observable<ValidationResult> {
         if (nodeAttribute.validators.validators.length === 0) {
             return of(VALID_RESULT);
         }

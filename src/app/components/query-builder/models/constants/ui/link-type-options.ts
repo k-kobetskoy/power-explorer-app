@@ -6,5 +6,6 @@ export const LinkTypeOptions : string[] = [
     'all',
     'not all',
     'exists',
+    'in',
     'matchfirstrowusingcrossapply'
 ];

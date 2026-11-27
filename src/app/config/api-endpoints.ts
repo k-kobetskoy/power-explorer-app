@@ -17,6 +17,12 @@ export const API_ENDPOINTS = {
             return `${apiUrl}/api/data/v9.2/EntityDefinitions(LogicalName='${entityLogicalName}')/Attributes?$select=${this.attributeParameters.join(',')}&$filter=(IsValidForForm eq true and AttributeType ne 'Virtual' and AttributeType ne 'EntityName')`; 
         }
     },
+    // Columns a link-entity can join on. Not filtered by IsValidForForm: primary keys are not valid for forms
+    joinAttributes: {
+        getResourceUrl(apiUrl: string, entityLogicalName: string) {
+            return `${apiUrl}/api/data/v9.2/EntityDefinitions(LogicalName='${entityLogicalName}')/Attributes?$select=${API_ENDPOINTS.attributes.attributeParameters.join(',')}&$filter=(AttributeType ne 'Virtual' and AttributeType ne 'EntityName')`;
+        }
+    },
     picklist: {
         optionSetType: 'PicklistAttributeMetadata',
         getResourceUrl(apiUrl: string, entityLogicalName: string, attributeName: string, attributeType: string) {
