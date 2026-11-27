@@ -115,6 +115,7 @@ export class XmlParseService {
     }
 
     this.collectSyntaxErrors(state, tree.topNode, errors);
+    this.collectTextOutsideRoot(state, tree.topNode, errors);
 
     const rootElements = tree.topNode.getChildren(PARSER_NODE_NAMES.element);
 
@@ -142,6 +143,8 @@ export class XmlParseService {
         errors.push(`${this.position(state, node.from)}: syntax error.`);
       } else if (node.name === PARSER_NODE_NAMES.mismatchedCloseTag) {
         errors.push(`${this.position(state, node.from)}: closing tag ${state.sliceDoc(node.from, node.to)} does not match the open tag.`);
+      } else if (node.name === PARSER_NODE_NAMES.entityReference && !this.isPredefinedEntity(state.sliceDoc(node.from, node.to))) {
+        errors.push(`${this.position(state, node.from)}: unknown entity ${state.sliceDoc(node.from, node.to)}.`);
       } else if (node.name === PARSER_NODE_NAMES.missingCloseTag) {
         errors.push(`${this.position(state, node.from)}: missing closing tag.`);
       } else if (node.name === PARSER_NODE_NAMES.element) {
@@ -154,6 +157,23 @@ export class XmlParseService {
         }
       }
     } while (cursor.next());
+  }
+
+  /** Text next to the root element would be silently dropped, so it is an error. */
+  private collectTextOutsideRoot(state: EditorState, topNode: SyntaxNode, errors: string[]): void {
+    const textNodes = [PARSER_NODE_NAMES.text, PARSER_NODE_NAMES.entityReference,
+      PARSER_NODE_NAMES.characterReference, PARSER_NODE_NAMES.cdata];
+
+    for (let child = topNode.firstChild; child; child = child.nextSibling) {
+      if (textNodes.includes(child.name) && state.sliceDoc(child.from, child.to).trim()) {
+        errors.push(`${this.position(state, child.from)}: text outside the root element.`);
+        return;
+      }
+    }
+  }
+
+  private isPredefinedEntity(reference: string): boolean {
+    return Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, reference.slice(1, -1));
   }
 
   private readElement(state: EditorState, element: SyntaxNode, errors: string[]): ParsedElement | null {
