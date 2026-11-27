@@ -1,7 +1,9 @@
 import { TestBed } from '@angular/core/testing';
+import { HttpClient } from '@angular/common/http';
 import { HttpTestingController, TestRequest } from '@angular/common/http/testing';
 import { MatDialog } from '@angular/material/dialog';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, throwError } from 'rxjs';
+import { RequestNotSentError } from 'src/app/models/request-not-sent-error';
 import { ACTIVE_ENVIRONMENT_MODEL } from 'src/app/models/tokens';
 import { EnvironmentModel } from 'src/app/models/environment-model';
 import { QueryNode } from '../models/query-node';
@@ -228,6 +230,21 @@ describe('XmlExecutorService paging and request limits', () => {
     await settle();
 
     expect(names()).toEqual(['A', 'B']);
+  });
+
+  it('opens no second dialog and keeps the rows when loading more needs a sign-in', async () => {
+    await executeWith(moreRows('A'));
+    // what the interceptor does after it has put the sign-in prompt on screen
+    spyOn(TestBed.inject(HttpClient), 'get').and.returnValue(
+      throwError(() => new RequestNotSentError('Sign in is required to access this environment', true)));
+
+    service.loadMore();
+
+    expect(dialog.open).not.toHaveBeenCalled();
+    expect(names()).toEqual(['A']);
+    expect(rowsState().isLoadingMore).toBeFalse();
+    expect(rowsState().continuation).toBeDefined();
+    expect(rowsState().loadMoreError.message).toBe('Sign in is required to access this environment');
   });
 
   it('does not send a query that is too long', () => {
