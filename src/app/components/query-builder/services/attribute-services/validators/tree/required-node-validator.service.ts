@@ -16,7 +16,7 @@ constructor() { }
   validate(nodeTree: BehaviorSubject<QueryNodeTree>): Observable<ValidationResult> {
   return nodeTree.pipe(
     map(nodeTree => {
-      const rootNode = nodeTree.root;
+      const rootNode = nodeTree?.root;
       if (!rootNode) {
         return { isValid: false, errors: ['Root node is required'] } as ValidationResult;
       }
