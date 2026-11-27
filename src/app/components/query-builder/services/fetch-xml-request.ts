@@ -50,6 +50,20 @@ export function getPageableQueryPage(xml: string): number | null {
 }
 
 /**
+ * Asks for page 1 explicitly, as the Microsoft examples do: it is not documented that the paging
+ * annotations are returned without it. A query that cannot be paged or sets `page` stays as it is.
+ */
+export function withFirstPage(xml: string): string {
+  const setsPage = new DOMParser().parseFromString(xml, 'text/xml').documentElement?.hasAttribute('page');
+
+  if (setsPage || getPageableQueryPage(xml) === null) {
+    return xml;
+  }
+
+  return xml.replace(FETCH_OPENING_TAG, openingTag => openingTag.replace('<fetch', '<fetch page="1"'));
+}
+
+/**
  * Extracts the paging cookie from the `fetchxmlpagingcookie` annotation, an XML element whose
  * `pagingcookie` attribute is URL-encoded twice. Returns null when there is no usable cookie
  * (some queries only support simple paging).

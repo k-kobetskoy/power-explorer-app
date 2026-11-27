@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@angular/core';
 import { Observable, Subject, of, defer, switchMap, catchError, BehaviorSubject, map, startWith, take, throwIfEmpty, filter, merge } from 'rxjs';
 import { BaseRequestService } from './entity-services/abstract/base-request.service';
 import { API_ENDPOINTS } from 'src/app/config/api-endpoints';
-import { HttpHeaders } from '@angular/common/http';
+import { HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { NodeTreeService } from './node-tree.service';
 import { AttributeEntityService } from './entity-services/attribute-entity.service';
 import { QueryNode } from '../models/query-node';
@@ -11,7 +11,7 @@ import { AllAttributesStrategy, RowData } from './result-table/all-attributes-st
 import { DefinedAttributesStrategy } from './result-table/defined-attributes-strategy';
 import { ACTIVE_ENVIRONMENT_MODEL } from 'src/app/models/tokens';
 import { EnvironmentModel } from 'src/app/models/environment-model';
-import { MAX_REQUEST_URL_LENGTH, getPageableQueryPage, readPagingCookie, sanitizeForTransmission, withPage } from './fetch-xml-request';
+import { MAX_REQUEST_URL_LENGTH, getPageableQueryPage, readPagingCookie, sanitizeForTransmission, withFirstPage, withPage } from './fetch-xml-request';
 
 interface FetchXmlQueryOptions {
   maxPageSize?: number;
@@ -179,7 +179,8 @@ export class XmlExecutorService extends BaseRequestService {
       }
 
       const entitySetName: string = entityNode.entitySetName$?.value;
-      const sentXml = sanitizeForTransmission(xml);
+      // only the request gets the page attribute, the query in the editor stays as it is
+      const sentXml = withFirstPage(sanitizeForTransmission(xml));
 
       return this.executeRequest(sentXml, entitySetName, environmentUrl).pipe(
         switchMap(response => {
@@ -212,7 +213,7 @@ export class XmlExecutorService extends BaseRequestService {
         })
       );
     }).pipe(
-      catchError(error => of(this.reportRequestError(error))),
+      catchError(error => of(this.reportRequestError(error, entityNode?.entitySetName$?.value))),
       startWith<ExecutionState>({ status: 'loading' })
     );
   }
@@ -232,7 +233,7 @@ export class XmlExecutorService extends BaseRequestService {
     )).pipe(
       switchMap(response => this.appendPage(previous, response)),
       catchError(error => {
-        const { message, code } = this.reportRequestError(error);
+        const { message, code } = this.reportRequestError(error, continuation.entitySetName);
         return of<ExecutionState>({ ...previous, loadMoreError: { message, code } });
       })
     );
@@ -322,8 +323,13 @@ export class XmlExecutorService extends BaseRequestService {
     };
   }
 
-  private reportRequestError(error: any) {
-    console.error('Error executing XML request:', error?.message || 'Unknown error');
+  private reportRequestError(error: any, entitySetName: string) {
+    // The message of an HTTP error holds the URL, and the URL holds the query and the paging cookie
+    // with values of records: neither is logged
+    const logged = error instanceof HttpErrorResponse
+      ? `GET ${entitySetName} failed with status ${error.status}`
+      : error?.message || 'Unknown error';
+    console.error('Error executing XML request:', logged);
 
     const dataverseError = error?.error?.error;
     const message: string = dataverseError?.message || error?.message || 'Unknown error';

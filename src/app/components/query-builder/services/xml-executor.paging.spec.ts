@@ -74,6 +74,42 @@ describe('XmlExecutorService paging and request limits', () => {
     spyOn(console, 'error');
   });
 
+  it('asks for the first page explicitly', () => {
+    service.execute(XML, entityNode);
+
+    expect(sentFetch(executeRequest()).getAttribute('page')).toBe('1');
+  });
+
+  for (const attribute of ['top="10"', 'aggregate="true"']) {
+    it(`sends a query with ${attribute} without a page`, () => {
+      service.execute(`<fetch ${attribute}><entity name="account" /></fetch>`, entityNode);
+
+      expect(sentFetch(executeRequest()).hasAttribute('page')).toBeFalse();
+    });
+  }
+
+  it('sends the page and count of the query as they are and continues from the next page', async () => {
+    service.execute('<fetch page="3" count="2"><entity name="account" /></fetch>', entityNode);
+    const first = executeRequest();
+    expect(sentXml(first)).toBe('<fetch page="3" count="2"><entity name="account" /></fetch>');
+
+    first.flush(moreRows('A'));
+    await settle();
+    service.loadMore();
+    const next = sentFetch(executeRequest());
+
+    expect(next.getAttribute('page')).toBe('4');
+    expect(next.getAttribute('count')).toBe('2');
+  });
+
+  it('keeps the request URL out of the log when a request fails', async () => {
+    await executeWith(moreRows('A'));
+    service.loadMore();
+    executeRequest().flush(null, { status: 500, statusText: 'Server Error' });
+
+    expect(console.error).toHaveBeenCalledOnceWith('Error executing XML request:', 'GET accounts failed with status 500');
+  });
+
   it('marks a response with more records as incomplete', async () => {
     await executeWith(moreRows('A'));
 
@@ -209,6 +245,6 @@ describe('XmlExecutorService paging and request limits', () => {
       entityNode);
 
     expect(sentXml(executeRequest())).toBe(
-      '<fetch> <entity name="account"> <filter> <condition attribute="name" operator="eq" value="A  B" /> <condition attribute="name" operator="in"> <value>C  D</value> </condition> </filter> </entity> </fetch>');
+      '<fetch page="1"> <entity name="account"> <filter> <condition attribute="name" operator="eq" value="A  B" /> <condition attribute="name" operator="in"> <value>C  D</value> </condition> </filter> </entity> </fetch>');
   });
 });
