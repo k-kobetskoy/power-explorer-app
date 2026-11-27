@@ -66,7 +66,7 @@ if (!gotTheLock) {
         nodeIntegration: false,
         contextIsolation: true,
         preload: preloadPath,
-        sandbox: false, // Disable sandbox for better compatibility
+        sandbox: true,
         webSecurity: false // Disable web security in development for easier API access
       }
     });
