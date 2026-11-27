@@ -1,7 +1,9 @@
 import { shell } from 'electron';
 
-// The only place that hands a URL to the operating system. Anything but https
-// could start a local program or a protocol handler, so it is rejected.
+const ALLOWED_PROTOCOLS = ['https:', 'mailto:'];
+
+// The only place that hands a URL to the operating system. Other schemes could
+// start a local program or a protocol handler, so they are rejected.
 export async function openExternalLink(link: string): Promise<boolean> {
   let protocol: string;
   try {
@@ -11,7 +13,7 @@ export async function openExternalLink(link: string): Promise<boolean> {
     return false;
   }
 
-  if (protocol !== 'https:') {
+  if (!ALLOWED_PROTOCOLS.includes(protocol)) {
     // Only the scheme is logged: the rest of the link may carry data
     console.warn(`[EXTERNAL-LINK] Rejected: scheme "${protocol}" is not allowed`);
     return false;
