@@ -36,7 +36,7 @@ describe('XmlParseService', () => {
     TestBed.configureTestingModule({ providers: provideQueryBuilderTesting() });
     parseService = TestBed.inject(XmlParseService);
     nodeTreeService = TestBed.inject(NodeTreeService);
-    // Instantiated as in the app: it re-renders the XML when the tree changes.
+    // Instantiated so that XML_PARSED triggers rendering, as in the app.
     renderService = TestBed.inject(QueryRenderService);
   });
 

@@ -39,12 +39,6 @@ export class QueryNode {
 
     destroyed$ = new Subject<void>();
 
-    /**
-     * Set by NodeTreeService on the root node of the active tree. Called whenever an attribute
-     * of any node in that tree is added, removed or changes its value. Null on detached trees.
-     */
-    onTreeChanged: (() => void) | null = null;
-
     constructor(
         nodeData: INodeData,
         attributeFactory: IAttributeFactory,
@@ -119,7 +113,6 @@ export class QueryNode {
                 if (atributeModel) {
                     attribute.setAttributeModel(atributeModel);
                 }
-                this.notifyTreeChanged();
             }
         } catch (error) {
             console.error(`[QueryNode] Error in setAttribute: ${error}`);
@@ -149,7 +142,6 @@ export class QueryNode {
             attributeToRemove.dispose(); // Clean up subscriptions
             attributes.splice(index, 1);
             this.attributes$.next(attributes);
-            this.notifyTreeChanged();
         }
     }
 
@@ -172,11 +164,6 @@ export class QueryNode {
         attributes.sort((a, b) => a.order - b.order);
 
         this.attributes$.next(attributes);
-        this.notifyTreeChanged();
-    }
-
-    private notifyTreeChanged(): void {
-        (this.rootNode ?? this).onTreeChanged?.();
     }
 
     private addToLastFreePosition(attribute: NodeAttribute, attributes: NodeAttribute[]): void {

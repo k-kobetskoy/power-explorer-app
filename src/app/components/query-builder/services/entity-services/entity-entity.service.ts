@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { Observable, map, tap, switchMap, of, shareReplay, distinctUntilChanged, BehaviorSubject, filter, finalize } from 'rxjs';
+import { Observable, map, tap, switchMap, of, shareReplay, distinctUntilChanged, BehaviorSubject, filter } from 'rxjs';
 import { EntityDefinitionsResponseModel } from 'src/app/models/incoming/environment/entity-definitions-response-model';
 import { EntityModel } from 'src/app/models/incoming/environment/entity-model';
 import { CacheKeys } from 'src/app/config/cache-keys';
@@ -14,9 +14,6 @@ export class EntityEntityService extends BaseRequestService {
   }
 
   getEntitiesIsLoading$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
-
-  // Requests in flight per cache key, shared by concurrent subscribers on a cold cache
-  private inFlightRequests: { [key: string]: Observable<EntityModel[]> } = {};
 
   getEntities(isLoading: boolean = false): Observable<EntityModel[]> {
     if (isLoading) {
@@ -40,35 +37,23 @@ export class EntityEntityService extends BaseRequestService {
           return entities$.asObservable();
         }
 
-        return this.getInFlightRequest(key, envUrl).pipe(
+        const url = API_ENDPOINTS.entities.getResourceUrl(envUrl as string);
+
+        return this.httpClient.get<EntityDefinitionsResponseModel>(url).pipe(
+          map(({ value }) => value.map(({
+            LogicalName: logicalName,
+            DisplayName: { UserLocalizedLabel } = {},
+            EntitySetName: entitySetName
+          }) => ({
+            logicalName,
+            displayName: UserLocalizedLabel ? UserLocalizedLabel.Label : '',
+            entitySetName
+          }))),
+          tap(data => this.cacheService.setItem(data, key)),
           tap(() => isLoading ? this.getEntitiesIsLoading$.next(false) : null)
         );
       })
     );
-  }
-
-  private getInFlightRequest(key: string, envUrl: string): Observable<EntityModel[]> {
-    if (!this.inFlightRequests[key]) {
-      const url = API_ENDPOINTS.entities.getResourceUrl(envUrl as string);
-
-      this.inFlightRequests[key] = this.httpClient.get<EntityDefinitionsResponseModel>(url).pipe(
-        map(({ value }) => value.map(({
-          LogicalName: logicalName,
-          DisplayName: { UserLocalizedLabel } = {},
-          EntitySetName: entitySetName
-        }) => ({
-          logicalName,
-          displayName: UserLocalizedLabel ? UserLocalizedLabel.Label : '',
-          entitySetName
-        }))),
-        tap(data => this.cacheService.setItem(data, key)),
-        // Success is cached above; on error nothing is kept, so the next call sends a new request
-        finalize(() => delete this.inFlightRequests[key]),
-        shareReplay({ bufferSize: 1, refCount: false })
-      );
-    }
-
-    return this.inFlightRequests[key];
   }
 
   getEntityByLogicalName(logicalName: string): Observable<EntityModel | null> {

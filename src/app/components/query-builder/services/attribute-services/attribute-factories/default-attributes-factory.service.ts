@@ -13,6 +13,6 @@ export class DefaultAttributesFactoryService implements IAttributeFactory {
   constructor(private validationService: ValidationService) { }
 
   createAttribute(attributeName: string, node: QueryNode, parserValidation: boolean, value?: string): NodeAttribute {
-    return new NodeAttribute(this.validationService, node, { oneTimeValidators: [], validators: [] }, { Order: 99, EditorName: attributeName, TreeViewDisplayStyle: AttributeTreeViewDisplayStyle.onlyValue, TreeViewName: attributeName }, value, parserValidation);
+    return new NodeAttribute(this.validationService, node, null, { Order: 99, EditorName: attributeName, TreeViewDisplayStyle: AttributeTreeViewDisplayStyle.onlyValue, TreeViewName: attributeName }, value, parserValidation);
   }
 }
