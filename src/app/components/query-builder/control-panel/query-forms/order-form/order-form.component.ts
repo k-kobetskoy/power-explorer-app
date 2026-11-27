@@ -1,4 +1,4 @@
-import { Component, Input, OnChanges, OnDestroy, OnInit, SimpleChanges, ChangeDetectionStrategy } from '@angular/core';
+import { Component, Input, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy } from '@angular/core';
 import { BaseFormComponent } from '../base-form.component';
 import { FormControl, FormsModule, ReactiveFormsModule    } from '@angular/forms';
 import { BehaviorSubject, Observable, Subject, combineLatest, of } from 'rxjs';
@@ -43,7 +43,7 @@ import { NodeActionsComponent } from '../node-actions/node-actions.component';
   styleUrls: ['./order-form.component.css'],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class OrderFormComponent extends BaseFormComponent implements OnInit, OnDestroy, OnChanges {
+export class OrderFormComponent extends BaseFormComponent implements OnDestroy, OnChanges {
   private destroy$ = new Subject<void>();
   isLoadingAttributes$ : BehaviorSubject<boolean>;
   filteredAttributes$: Observable<AttributeModel[]>;
@@ -56,10 +56,8 @@ export class OrderFormComponent extends BaseFormComponent implements OnInit, OnD
   @Input() selectedNode: QueryNode;
 
   constructor(private attributeService: AttributeEntityService,
-    private nodeTreeService: NodeTreeService) { super(); }
-
-  ngOnInit() {
-    this.initializeForm();
+    private nodeTreeService: NodeTreeService) {
+    super();
     this.isLoadingAttributes$ = this.attributeService.getAttributesIsLoading$;
   }
 

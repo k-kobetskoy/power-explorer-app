@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
-import { BehaviorSubject, takeUntil } from 'rxjs';
+import { BehaviorSubject, startWith, takeUntil } from 'rxjs';
 import { FilterStaticData } from '../../../../models/constants/ui/filter-static-data';
 import { OperatorValueBaseFormComponent } from '../../operator-value-base-form.component';
 import { MultiValueNodesService } from '../../../../services/multi-value-nodes.service';
@@ -49,11 +49,9 @@ export class StringFormComponent extends OperatorValueBaseFormComponent {
 
   private setupWildcardInfo() {
     this.operatorFormControl.valueChanges
-      .pipe(takeUntil(this.destroy$))
+      .pipe(startWith(this.operatorFormControl.value), takeUntil(this.destroy$))
       .subscribe(value => {
-        if (value) {
-          this.showWildcardInfo$.next(['like', 'not-like'].includes(value.toLowerCase()));
-        }
+        this.showWildcardInfo$.next(['like', 'not-like'].includes(value?.toLowerCase()));
       });
   }
 }

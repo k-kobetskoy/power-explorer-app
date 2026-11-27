@@ -1,4 +1,4 @@
-import { Component, OnChanges, OnDestroy, OnInit, SimpleChanges, ChangeDetectionStrategy, Input, Inject } from '@angular/core';
+import { Component, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, Input, Inject } from '@angular/core';
 import { BaseFormComponent } from '../base-form.component';
 import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { EntityModel } from 'src/app/models/incoming/environment/entity-model';
@@ -45,7 +45,7 @@ import { AccountInfo } from '@azure/msal-browser';
     changeDetection: ChangeDetectionStrategy.OnPush
 })
 
-export class EntityFormComponent extends BaseFormComponent implements OnInit, OnDestroy, OnChanges {
+export class EntityFormComponent extends BaseFormComponent implements OnDestroy, OnChanges {
     dublicateNode() {
         throw new Error('Method not implemented.');
     }
@@ -69,11 +69,6 @@ export class EntityFormComponent extends BaseFormComponent implements OnInit, On
     ) {
         super();
         // this.isLoading$ = this.entityService.getEntitiesIsLoading$;
-    }
-
-    ngOnInit() {
-        this.initializeForm();
-        this.initializeIsLoading();
     }
 
     initializeIsLoading() {
@@ -100,10 +95,12 @@ export class EntityFormComponent extends BaseFormComponent implements OnInit, On
     }
 
     private initializeForm() {
-        const nameAttribute = this.getAttribute(this.nameAttributeData, this.selectedNode);
+        this.initializeIsLoading();
+
+        const name = this.getAttribute(this.nameAttributeData, this.selectedNode)?.value$.value ?? '';
 
         this.entityForm = this.fb.group({
-            [this.nameAttributeData.EditorName]: [nameAttribute || '']
+            [this.nameAttributeData.EditorName]: [name]
         });
 
         // Form input -> model
@@ -164,7 +161,7 @@ export class EntityFormComponent extends BaseFormComponent implements OnInit, On
     }
 
     private filterEntities(value: string, entities: EntityModel[]): EntityModel[] {
-        const filterValue = value || '';
+        const filterValue = (value || '').toLowerCase();
         return entities.filter(entity =>
             entity.logicalName.toLowerCase().includes(filterValue) ||
             entity.displayName.toLowerCase().includes(filterValue)

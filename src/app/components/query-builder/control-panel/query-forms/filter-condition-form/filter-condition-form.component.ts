@@ -1,6 +1,6 @@
-import { Component, Input, OnChanges, OnDestroy, OnInit, SimpleChanges, ChangeDetectionStrategy } from '@angular/core';
+import { Component, Input, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy } from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { Observable, Subject, distinctUntilChanged, map, of, startWith, switchMap, takeUntil, BehaviorSubject, catchError, debounceTime, filter } from 'rxjs';
+import { Observable, Subject, distinctUntilChanged, map, of, startWith, switchMap, takeUntil, BehaviorSubject, catchError, debounceTime, shareReplay } from 'rxjs';
 import { AttributeModel } from 'src/app/models/incoming/attrubute/attribute-model';
 import { AttributeEntityService } from 'src/app/components/query-builder/services/entity-services/attribute-entity.service';
 import { AttributeType } from '../../../models/constants/dataverse/attribute-types';
@@ -27,6 +27,8 @@ import { FormsModule } from '@angular/forms';
 import { NodeTreeService } from 'src/app/components/query-builder/services/node-tree.service';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { NodeActionsComponent } from '../node-actions/node-actions.component';
+import { MultiValueNodesService } from '../../../services/multi-value-nodes.service';
+import { FilterStaticData } from '../../../models/constants/ui/filter-static-data';
 
 @Component({
   standalone: true,
@@ -56,7 +58,7 @@ import { NodeActionsComponent } from '../node-actions/node-actions.component';
   styleUrls: ['./filter-condition-form.component.css'],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class FilterConditionFormComponent extends BaseFormComponent implements OnInit, OnChanges, OnDestroy {
+export class FilterConditionFormComponent extends BaseFormComponent implements OnChanges, OnDestroy {
   private _destroy$ = new Subject<void>();
 
   private readonly conditionAttribute = AttributeData.Condition.Attribute;
@@ -64,7 +66,9 @@ export class FilterConditionFormComponent extends BaseFormComponent implements O
   private readonly conditionValue = AttributeData.Condition.Value;
 
   @Input() selectedNode: QueryNode;
-  private previousAttribute: string = null;
+  // The attribute the operator and the value of the node belong to
+  private committedAttribute = '';
+  private knownAttributes: AttributeModel[] = [];
 
   isLoadingAttributes$: BehaviorSubject<boolean>;
 
@@ -76,17 +80,12 @@ export class FilterConditionFormComponent extends BaseFormComponent implements O
 
   attributeFormControl = new FormControl('');
 
-  isValidAttributeSelected = false;
-
   constructor(
     private attributeEntityService: AttributeEntityService,
-    private nodeTreeService: NodeTreeService) {
+    private nodeTreeService: NodeTreeService,
+    private multiValueNodesService: MultiValueNodesService) {
     super();
     this.isLoadingAttributes$ = this.attributeEntityService.getAttributesIsLoading$;
-  }
-
-  ngOnInit() {
-    this.initializeForm();
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -102,6 +101,8 @@ export class FilterConditionFormComponent extends BaseFormComponent implements O
 
     this.setupAttributesSubscription();
 
+    this.setupSelectedAttribute();
+
     this.setupFormToModelBinding();
 
     this.setupFiltering();
@@ -114,7 +115,6 @@ export class FilterConditionFormComponent extends BaseFormComponent implements O
   setupFormToModelBinding() {
     this.attributeFormControl.valueChanges.pipe(
       distinctUntilChanged(),
-      filter(() => this.attributeFormControl.dirty),
       takeUntil(this._destroy$))
       .subscribe(value => {
         this.selectedNode.setAttribute(this.conditionAttribute, value);
@@ -140,16 +140,59 @@ export class FilterConditionFormComponent extends BaseFormComponent implements O
         console.error('Error loading attributes:', error);
         return of([]);
       }),
-      takeUntil(this._destroy$)
+      takeUntil(this._destroy$),
+      shareReplay({ bufferSize: 1, refCount: true })
     );
   }
 
   private setInputInitialValues() {
-    const attribute = this.getAttribute(this.conditionAttribute, this.selectedNode);
+    const value = this.getAttribute(this.conditionAttribute, this.selectedNode)?.value$.value ?? '';
 
-    if (attribute) {
-      this.attributeFormControl.setValue(attribute.value$.value, { emitEvent: false });
+    this.attributeFormControl.reset(value, { emitEvent: false });
+    this.committedAttribute = value;
+    this.knownAttributes = [];
+    this.selectedAttribute$.next(null);
+  }
+
+  // Shows the operator and value inputs for the attribute the node already has. Does not write to the model
+  private setupSelectedAttribute() {
+    this.attributes$.subscribe(attributes => {
+      this.knownAttributes = attributes;
+
+      const attribute = this.findAttributeModel(this.committedAttribute);
+      if (attribute) {
+        this.selectedAttribute$.next(attribute);
+      }
+    });
+  }
+
+  // The user has chosen an attribute: an option of the list, or a typed name confirmed by Enter or by leaving the input
+  commitAttribute(value: string) {
+    const attribute = this.findAttributeModel(value);
+    if (!attribute) {
+      return;
     }
+
+    if (attribute.logicalName.toLowerCase() !== this.committedAttribute.toLowerCase()) {
+      this.resetOperatorAndValue();
+    }
+
+    this.committedAttribute = attribute.logicalName;
+    this.updateAttribute(this.conditionAttribute, this.selectedNode, attribute.logicalName, attribute);
+    this.selectedAttribute$.next(attribute);
+  }
+
+  private findAttributeModel(logicalName: string): AttributeModel | undefined {
+    const name = (logicalName ?? '').toLowerCase();
+    return this.knownAttributes.find(attr => attr.logicalName.toLowerCase() === name);
+  }
+
+  private resetOperatorAndValue() {
+    this.multiValueNodesService.clearValueNodes(this.selectedNode);
+    this.selectedNode.removeAttribute(this.conditionValue.EditorName);
+    // Removed and added again, not overwritten: the operator inputs follow added and removed attributes
+    this.selectedNode.removeAttribute(this.conditionOperator.EditorName);
+    this.updateAttribute(this.conditionOperator, this.selectedNode, FilterStaticData.DefaultOperator);
   }
 
   private setupFiltering() {
@@ -168,32 +211,10 @@ export class FilterConditionFormComponent extends BaseFormComponent implements O
       : String(value || '').toLowerCase();
 
     return this.attributes$.pipe(
-      map(attributes => {
-        const attribute = attributes.find(attr => attr.logicalName.toLowerCase() === filterValue);
-        if (attribute) {
-          const currentAttributeValue = attribute.logicalName;
-
-          // If attribute changed, clear operator and value attributes
-          if (this.previousAttribute !== null && this.previousAttribute !== currentAttributeValue) {
-            // Remove operator and value when attribute changes
-            this.selectedNode.removeAttribute(this.conditionOperator.EditorName);
-            this.selectedNode.removeAttribute(this.conditionValue.EditorName);
-            this.isValidAttributeSelected = true;
-          }
-
-          this.updateAttribute(this.conditionAttribute, this.selectedNode, attribute.logicalName, attribute);
-          this.selectedAttribute$.next(attribute);
-          this.previousAttribute = currentAttributeValue;
-        }
-        else {
-          this.isValidAttributeSelected = false;
-        }
-
-        return attributes.filter(entity =>
-          entity.logicalName.toLowerCase().includes(filterValue) ||
-          entity.displayName.toLowerCase().includes(filterValue)
-        );
-      })
+      map(attributes => attributes.filter(entity =>
+        entity.logicalName.toLowerCase().includes(filterValue) ||
+        entity.displayName.toLowerCase().includes(filterValue)
+      ))
     );
   }
 

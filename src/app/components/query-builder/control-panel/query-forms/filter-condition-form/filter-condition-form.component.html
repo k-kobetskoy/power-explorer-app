@@ -20,9 +20,9 @@
           <mat-form-field class="input-full-width">
             <mat-label>Attrubute</mat-label>
             <input type="text" matInput [formControl]="attributeFormControl" [matAutocomplete]="auto"
-              (keyup)="onKeyPressed($event)">
+              (keyup)="onKeyPressed($event)" (change)="commitAttribute(attributeFormControl.value)">
 
-            <mat-autocomplete #auto="matAutocomplete">
+            <mat-autocomplete #auto="matAutocomplete" (optionSelected)="commitAttribute($event.option.value)">
               <mat-option *ngFor="let option of filteredAttributes$ | async" [value]="option.logicalName">
                 <div class="option-content">
                   <span class="logical-name"> {{option.logicalName}} </span>

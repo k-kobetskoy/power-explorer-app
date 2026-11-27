@@ -1,6 +1,9 @@
 import { UiInputProperty } from "../../abstract/ui-input-property";
 
 export class FilterStaticData {
+    /** Operator of a new condition; every operator list below contains it. */
+    static readonly DefaultOperator = 'eq';
+
     static readonly FilterTypes: UiInputProperty[] =
         [
             { name: 'And', value: 'and' },

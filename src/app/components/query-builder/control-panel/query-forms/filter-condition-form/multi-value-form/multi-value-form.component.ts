@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
+import { Component, Input, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { BehaviorSubject } from 'rxjs';
 import {  takeUntil } from 'rxjs/operators';
@@ -33,7 +33,7 @@ import { NodeActionsComponent } from '../../node-actions/node-actions.component'
     styleUrls: ['./multi-value-form.component.css'],
     changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class MultiValueFormComponent extends OperatorValueBaseFormComponent implements OnInit, OnDestroy {
+export class MultiValueFormComponent extends OperatorValueBaseFormComponent implements OnDestroy {
     override multiValueControl = new FormControl('');
     operatorType$ = new BehaviorSubject<string>('');
 
@@ -45,15 +45,10 @@ export class MultiValueFormComponent extends OperatorValueBaseFormComponent impl
         super(multiValueNodesSvc);
     }
 
-    override ngOnInit() {
-        super.ngOnInit();
-        this.setupMultiValueInput();
-    }
-
     protected override initializeForm() {
         super.initializeForm();
 
-        this.loadExistingMultiValues();
+        this.setupMultiValueInput();
     }
 
     private setupMultiValueInput() {
@@ -87,13 +82,6 @@ export class MultiValueFormComponent extends OperatorValueBaseFormComponent impl
     override processMultiValues(): void {
         this.multiValueNodesSvc.processMultiValues(this.selectedNode, this.multiValueControl.value);
         this.multiValueControl.setValue('', { emitEvent: false });
-    }
-
-    private loadExistingMultiValues() {
-        // Only called during initial form setup
-        if (this.isMultiValueOperator(this.operatorFormControl.value)) {
-            this.multiValueControl.setValue('', { emitEvent: false });
-        }
     }
 
     protected override handleMultiValueOperator() {

@@ -1,4 +1,4 @@
-import { Component, OnChanges, OnDestroy, OnInit, SimpleChanges, ChangeDetectionStrategy, Input, ChangeDetectorRef } from '@angular/core';
+import { Component, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, Input, ChangeDetectorRef } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { Observable, Subject, debounceTime, distinctUntilChanged, map, startWith, switchMap, takeUntil, combineLatest, of, catchError, filter, finalize, BehaviorSubject, tap, EMPTY } from 'rxjs';
 import { AttributeModel } from 'src/app/models/incoming/attrubute/attribute-model';
@@ -41,7 +41,7 @@ import { NodeActionsComponent } from '../node-actions/node-actions.component';
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 
-export class AttributeFormComponent extends BaseFormComponent implements OnInit, OnDestroy, OnChanges {
+export class AttributeFormComponent extends BaseFormComponent implements OnDestroy, OnChanges {
   private destroy$ = new Subject<void>();
 
   @Input() selectedNode: QueryNode;
@@ -64,10 +64,6 @@ export class AttributeFormComponent extends BaseFormComponent implements OnInit,
   ) {
     super();
     this.isLoadingAttributes$ = this.attributeService.getAttributesIsLoading$;
-  }
-
-  ngOnInit() {
-    this.initializeForm();
   }
 
   ngOnChanges(changes: SimpleChanges) {
