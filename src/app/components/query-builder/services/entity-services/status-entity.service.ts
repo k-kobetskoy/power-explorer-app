@@ -43,7 +43,8 @@ export class StatusEntityService extends BaseRequestService {
           map(({ Options }): StateModel[] => Options.map(({ Value, Label }): StateModel =>
             ({ value: Value, label: Label?.UserLocalizedLabel ? Label.UserLocalizedLabel.Label : '' }))),
           tap(data => this.cacheService.setItem<StateModel[]>(data, key)),
-          tap(() => isLoading ? this.getStateOrStatusCodeValuesIsLoading$.next(false) : null)
+          tap(() => isLoading ? this.getStateOrStatusCodeValuesIsLoading$.next(false) : null),
+          this.waitForSignIn(this.getStateOrStatusCodeValuesIsLoading$)
         );
       })
     );

@@ -26,7 +26,6 @@ export class EntityNameServerValidatorService implements IAttributeValidator {
             const entity = entities.find(e => e.logicalName === value);
 
             if (entity) {
-              attribute.parentNode.entitySetName$.next(entity.entitySetName);
               return VALID_RESULT;
             }
 

@@ -108,15 +108,7 @@ export class AttributeEntityService extends BaseRequestService {
         
         // Create the API request observable
         const request$ = this.httpClient.get<AttributeResponseModel>(url).pipe(
-          map(({ value }) => value.map(({
-            LogicalName: logicalName,
-            DisplayName: { UserLocalizedLabel } = {},
-            AttributeType: attributeType }): AttributeModel =>
-          ({
-            logicalName,
-            displayName: UserLocalizedLabel ? UserLocalizedLabel.Label : '',
-            attributeType
-          }))),
+          map(response => this.toAttributeModels(response)),
           tap(data => { 
             this.cacheService.setItem(data, cacheKey); 
             // Remove from in-flight requests
@@ -151,6 +143,56 @@ export class AttributeEntityService extends BaseRequestService {
         
         return request$;
       }));
+  }
+
+  /**
+   * Columns that can be used in `from` / `to` of a link-entity. A wider list than getAttributes,
+   * which is limited to form fields and therefore has no primary keys.
+   */
+  getJoinAttributes(entityLogicalName: string): Observable<AttributeModel[]> {
+    return this.activeEnvironmentUrl$.pipe(
+      switchMap(envUrl => {
+        if (!envUrl) {
+          return of([]);
+        }
+
+        const cacheKey = `${this.prepareEnvUrl(envUrl)}_${CacheKeys.JoinAttributes}_${entityLogicalName.trim().toLowerCase()}`;
+
+        const cachedAttributes = this.cacheService.getItem<AttributeModel[]>(cacheKey);
+        if (cachedAttributes.value) {
+          return cachedAttributes.asObservable();
+        }
+
+        if (!this.inFlightRequests[cacheKey]) {
+          const url = API_ENDPOINTS.joinAttributes.getResourceUrl(envUrl, entityLogicalName);
+
+          this.inFlightRequests[cacheKey] = this.httpClient.get<AttributeResponseModel>(url).pipe(
+            map(response => this.toAttributeModels(response)),
+            tap(data => this.cacheService.setItem(data, cacheKey)),
+            // Success is cached above; on error nothing is kept, so the next call sends a new request
+            finalize(() => delete this.inFlightRequests[cacheKey]),
+            shareReplay(1),
+            catchError(error => {
+              console.error(`Error fetching join attributes for entity ${entityLogicalName}:`, error);
+              return of([]);
+            })
+          );
+        }
+
+        return this.inFlightRequests[cacheKey];
+      }));
+  }
+
+  private toAttributeModels({ value }: AttributeResponseModel): AttributeModel[] {
+    return value.map(({
+      LogicalName: logicalName,
+      DisplayName: { UserLocalizedLabel } = {},
+      AttributeType: attributeType }): AttributeModel =>
+    ({
+      logicalName,
+      displayName: UserLocalizedLabel ? UserLocalizedLabel.Label : '',
+      attributeType
+    }));
   }
 
   /**
@@ -198,7 +240,7 @@ export class AttributeEntityService extends BaseRequestService {
         const entityObservables: Observable<void>[] = entityLogicalNames.map(entityLogicalName => {
           return new Observable<void>(subscriber => {
             // Get ALL attributes for this entity without filtering
-            this.getAttributes(entityLogicalName).subscribe({
+            this.getAttributes(entityLogicalName).pipe(take(1)).subscribe({
               next: (attributes) => {
                 try {
                   // Create a Map with ALL attributes
@@ -365,7 +407,7 @@ export class AttributeEntityService extends BaseRequestService {
             }
 
             // Get attributes for this entity
-            this.getAttributes(entityLogicalName).subscribe({
+            this.getAttributes(entityLogicalName).pipe(take(1)).subscribe({
               next: (attributes) => {
                 try {
                   // Filter to requested attributes

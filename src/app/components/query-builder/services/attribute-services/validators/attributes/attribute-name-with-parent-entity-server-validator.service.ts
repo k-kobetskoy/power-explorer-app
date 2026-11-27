@@ -33,13 +33,16 @@ export class AttributeNameWithParentEntityServerValidatorService implements IAtt
           });
         }
 
+        // The name is read when its validation result arrives, so the two always belong together
+        const parentName$ = entityNameAttr.validationResult$.pipe(
+          map(isValid => ({ isValid, entityLogicalName: entityNameAttr.value$.value }))
+        );
+
         return combineLatest([
           attribute.value$.pipe(distinctUntilChanged()),
-          entityNameAttr.validationResult$,
-          entityNameAttr.value$
+          parentName$
         ]).pipe(
-          distinctUntilChanged(),
-          switchMap(([attributeName, isValid, entityLogicalName]) => {
+          switchMap(([attributeName, { isValid, entityLogicalName }]) => {
             if (!attributeName) {
               return of({
                 isValid: false,

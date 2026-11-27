@@ -6,6 +6,9 @@ export class AttributeDisplayValues {
     treeViewDisplayValue$: Observable<string>;
     editorViewDisplayValue$: Observable<string>;
 
+    private readonly editorViewDisplayName: string;
+    private readonly ignoreFalseValues: boolean;
+
     constructor(
         nodeAttribute: NodeAttribute,
         attributeValue$: BehaviorSubject<string>,
@@ -15,6 +18,8 @@ export class AttributeDisplayValues {
         ignoreFalseValues: boolean = false) {
 
         this.displayOnTreeView = treeViewDisplayStyle !== AttributeTreeViewDisplayStyle.none;
+        this.editorViewDisplayName = editorViewDisplayName;
+        this.ignoreFalseValues = ignoreFalseValues;
 
         // Initialize with empty observable by default
         this.treeViewDisplayValue$ = of('');
@@ -97,15 +102,30 @@ export class AttributeDisplayValues {
         );
     }
 
+    /** The attribute as it appears in FetchXML (`name="value"`), or '' when it is omitted. */
+    getEditorViewDisplayValueFor(value: string): string {
+        return this.getEditorViewDisplayValue(value, this.editorViewDisplayName, this.ignoreFalseValues);
+    }
+
     getEditorViewDisplayValue(value: string, editorViewDisplayName: string, ignoreFalseValues: boolean): string {
-        if (value.length === 0) {
+        if (value === null || value === undefined || value.length === 0) {
             return '';
         }
 
         if (ignoreFalseValues) {
-            return value !== 'false' && value !== '0' ? `${editorViewDisplayName}="${value}"` : '';
+            return value !== 'false' && value !== '0' ? `${editorViewDisplayName}="${escapeXmlAttribute(value)}"` : '';
         }
 
-        return `${editorViewDisplayName}="${value}"`;
+        return `${editorViewDisplayName}="${escapeXmlAttribute(value)}"`;
     }
+}
+
+/** Escapes a value for a double-quoted XML attribute: &, <, > and ". */
+export function escapeXmlAttribute(value: string): string {
+    return escapeXmlText(value).replace(/"/g, '&quot;');
+}
+
+/** Escapes XML element text: &, < and >. */
+export function escapeXmlText(value: string): string {
+    return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

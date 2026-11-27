@@ -396,9 +396,9 @@ export class LinkEntityFormComponent extends BaseFormComponent implements OnInit
 
   private setupFromAttributeAutocomplete() {
     const attributes$ = this.selectedNode.attributes$.pipe(
-      distinctUntilChanged((prev, curr) => prev.length === curr.length),
       filter(attributes => attributes.length > 0),
       map(attributes => attributes.find(attr => attr.editorName === AttributeNames.linkEntity)),
+      distinctUntilChanged(),
       takeUntil(this.destroy$),
       switchMap(entityAttribute => {
         if (!entityAttribute) { return of([] as AttributeModel[]) };
@@ -441,10 +441,11 @@ export class LinkEntityFormComponent extends BaseFormComponent implements OnInit
     }
 
     const parentEntityAttribute$ = parentNode.attributes$.pipe(
-      distinctUntilChanged((prev, curr) => prev.length === curr.length),
       map(attributes => attributes.find(attr => attr.editorName === AttributeNames.entityName)),
+      distinctUntilChanged(),
       takeUntil(this.destroy$),
       switchMap(entityAttribute => {
+        if (!entityAttribute) { return of([] as AttributeModel[]) }
         return entityAttribute.value$.pipe(
           takeUntil(this.destroy$),
           distinctUntilChanged(),
