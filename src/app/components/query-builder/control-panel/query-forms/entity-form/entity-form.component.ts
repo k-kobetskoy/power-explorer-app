@@ -69,7 +69,6 @@ export class EntityFormComponent extends BaseFormComponent implements OnDestroy,
         @Inject(ACTIVE_ACCOUNT_MODEL) private activeAccount: BehaviorSubject<AccountInfo>
     ) {
         super();
-        // this.isLoading$ = this.entityService.getEntitiesIsLoading$;
     }
 
     initializeIsLoading() {

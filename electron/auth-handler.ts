@@ -144,10 +144,8 @@ class AuthHandler {
 
         // Handle get active account request
         handleTrusted(IpcChannels.AUTH_GET_ACTIVE_ACCOUNT, async (): Promise<AccountInfo | null> => {
-            console.log('[AUTH-HANDLER] Direct getActiveAccount handler called');
             try {
                 const account = await this.getActiveAccount();
-                console.log('[AUTH-HANDLER] Direct getActiveAccount result:', account ? 'Account found' : 'No account');
                 return account;
             } catch (error) {
                 console.error('[AUTH-HANDLER] Direct getActiveAccount error:', error);
