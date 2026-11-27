@@ -6,7 +6,7 @@ import { ACTIVE_ENVIRONMENT_MODEL, ACTIVE_ACCOUNT_MODEL } from '../models/tokens
 import { EnvironmentModel } from '../models/environment-model';
 import { AccountInfo } from '@azure/msal-browser';
 import { NotificationService } from './notification.service';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute } from '@angular/router';
 import { ElectronService, TokenResponse } from './electron.service';
 import { ErrorDialogService } from './error-dialog.service';
 import { isSameEnvironment } from './environment-url';
@@ -22,7 +22,6 @@ export class DesktopAuthService {
     @Inject(ACTIVE_ACCOUNT_MODEL) private activeAccount: BehaviorSubject<AccountInfo>,
     private electronService: ElectronService,
     private notificationService: NotificationService,
-    private router: Router,
     private route: ActivatedRoute,
     private errorDialogService: ErrorDialogService,
     private ngZone: NgZone
@@ -47,21 +46,6 @@ export class DesktopAuthService {
       } else {
         this.activeAccount.next(null);
       }
-    });
-
-    // Listen for auth success/failure messages
-    this.listen('auth-success', (data: { account: AccountInfo }) => {
-      if (data && data.account) {
-        this.activeAccount.next(data.account);
-        this.notificationService.showSuccess('Login successful');
-        // Navigate to home or dashboard
-        this.router.navigate(['/']);
-      }
-    });
-
-    this.listen('auth-failed', (data: { error: string, errorDescription: string }) => {
-      console.error('[ELECTRON-AUTH] Authentication failed:', data?.error);
-      this.notificationService.showError(`Login failed: ${data.errorDescription || data.error || 'Unknown error'}`);
     });
   }
 

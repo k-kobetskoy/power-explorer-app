@@ -229,60 +229,6 @@ class AuthHandler {
             // Send notification to the renderer
             this.sendToRenderer('app-returned-from-auth');
         }
-        
-        const code = params.code;
-        const state = params.state;
-        const error = params.error;
-        const errorDescription = params.error_description;
-        
-        if (code || error) {
-            console.log('[AUTH-HANDLER] Processing auth code or error');
-            
-            if (error || !this.activeLogin || !this.pca) {
-                // Handle error case
-                console.error('[AUTH-HANDLER] Auth redirect error:', error, errorDescription);
-                
-                // Notify the renderer that auth failed
-                this.sendToRenderer('auth-failed', { error, errorDescription });
-                return;
-            }
-            
-            if (code && this.activeLogin) {
-                const environmentModel = this.activeLogin.environmentModel;
-                try {
-                    // Exchange code for token
-                    const authResult = await this.pca.acquireTokenByCode({
-                        code,
-                        scopes: [`${environmentModel.apiUrl}/user_impersonation`],
-                        redirectUri: this.redirectUri,
-                        authority: this.authority
-                    });
-                    
-                    console.log('[AUTH-HANDLER] Auth code exchange successful');
-                    
-                    // Save the environment model
-                    this.updateStoredEnvironments(environmentModel);
-                    
-                    // Set the active account
-                    this.storeActiveAccount(authResult.account);
-                    
-                    // Notify the renderer that auth was successful
-                    this.sendToRenderer('auth-success', { account: authResult.account });
-                    
-                } catch (error) {
-                    console.error('[AUTH-HANDLER] Error exchanging auth code:', error);
-                    
-                    // Notify the renderer that auth failed
-                    this.sendToRenderer('auth-failed', { 
-                        error: 'code_exchange_error', 
-                        errorDescription: error instanceof Error ? error.message : String(error)
-                    });
-                }
-            }
-        } else {
-            // This is just a deep link to bring the app to the foreground
-            console.log('[AUTH-HANDLER] Deep link activation without auth params');
-        }
     }
 
     // A repeated request for the same environment joins the running sign-in;
