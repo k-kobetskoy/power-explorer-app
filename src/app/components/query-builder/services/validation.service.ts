@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { Observable, of, combineLatest, map, switchMap, shareReplay, catchError, takeUntil, BehaviorSubject } from 'rxjs';
+import { Observable, of, combineLatest, map, switchMap, shareReplay, catchError, takeUntil, BehaviorSubject, startWith } from 'rxjs';
 import { QueryNode } from '../models/query-node';
 import { NodeAttribute } from '../models/node-attribute';
 import { RequiredNodeValidatorService } from './attribute-services/validators/tree/required-node-validator.service';
@@ -20,19 +20,29 @@ export class ValidationService {
     constructor(private requiredNodeValidator: RequiredNodeValidatorService) { }
 
     setupNodeAttributeValidation(nodeAttribute: NodeAttribute): Observable<ValidationResult> {
-        if (nodeAttribute.parserValidation && nodeAttribute.validators.oneTimeValidators.length > 0) {
-            const oneTimeResults = nodeAttribute.validators.oneTimeValidators.map(validator => validator.validate(nodeAttribute));
+        if (nodeAttribute.parserValidation && nodeAttribute.validators.oneTimeValidators.length > 0
+            && !this.runOneTimeValidators(nodeAttribute).isValid) {
+            // The parsed value is wrong: check again whenever it changes, so that a fix clears the error
+            return nodeAttribute.value$.pipe(
+                map(() => this.runOneTimeValidators(nodeAttribute)),
+                switchMap(result => result.isValid ? this.setupReactiveAttributeValidation(nodeAttribute) : of(result)),
+                takeUntil(nodeAttribute.destroyed$)
+            );
+        }
 
-            const combinedResult = oneTimeResults.reduce((acc, result) => ({
+        return this.setupReactiveAttributeValidation(nodeAttribute);
+    }
+
+    private runOneTimeValidators(nodeAttribute: NodeAttribute): ValidationResult {
+        return nodeAttribute.validators.oneTimeValidators
+            .map(validator => validator.validate(nodeAttribute))
+            .reduce((acc, result) => ({
                 isValid: acc.isValid && result.isValid,
                 errors: [...acc.errors, ...result.errors]
             }), VALID_RESULT);
+    }
 
-            if (!combinedResult.isValid) {
-                return of(combinedResult);
-            }
-        }
-
+    private setupReactiveAttributeValidation(nodeAttribute: NodeAttribute): Observable<ValidationResult> {
         if (nodeAttribute.validators.validators.length === 0) {
             return of(VALID_RESULT);
         }
@@ -76,13 +86,7 @@ export class ValidationService {
             }
         }
 
-        // Skip setting up reactive validations if there are no validators
-        if (node.validatiors.validators.length === 0 &&
-            (!node.attributes$.value || node.attributes$.value.length === 0)) {
-            return of(VALID_RESULT);
-        }
-
-        // Attributes validation observable
+        // Attributes validation observable. Always built: a new node has no attributes yet
         const attributeValidationResults$ = node.attributes$.pipe(
             // distinctUntilChanged((prev, curr) => prev.length === curr.length),
             switchMap(attributes => {
@@ -156,77 +160,55 @@ export class ValidationService {
         );
     }
 
+    /**
+     * Validation of the whole tree. Follows every emission of nodeTree, including a replacement of the
+     * tree by Parse, and never completes, so one subscription lasts for the lifetime of NodeTreeService.
+     */
     setupNodeTreeValidation(nodeTree: BehaviorSubject<QueryNodeTree>): Observable<ValidationResult> {
-        // Handle null nodeTree case
-        if (!nodeTree || !nodeTree.value) {
-            return of({ isValid: false, errors: ['Tree structure is invalid'] });
-        }
+        const treeValidation$ = this.requiredNodeValidator.validate(nodeTree);
 
-        const destroyed$ = nodeTree.value.destroyed$;
-
-        const treeValidation$ = this.requiredNodeValidator.validate(nodeTree).pipe(
-            shareReplay({ bufferSize: 1, refCount: true }),
-            takeUntil(destroyed$)
-        );
-
-        // Create an observable that emits whenever a new node is added to the tree
-        // or when an existing node's validation state changes
+        // Re-subscribes to the node validations whenever the tree emits (node added/removed or tree replaced)
         const nodesValidation$ = nodeTree.pipe(
             switchMap(tree => {
                 if (!tree || !tree.root) {
                     return of(VALID_RESULT);
-                }                
+                }
 
-                // Collect all node validation observables
                 const nodeValidations: Observable<ValidationResult>[] = [];
-                let nodeCount = 0;
-                
+
                 for (const node of tree) {
-                    nodeCount++;
                     if (node && node.validationResult$) {
                         nodeValidations.push(node.validationResult$);
                     }
                 }
-                
+
                 if (nodeValidations.length === 0) {
                     return of(VALID_RESULT);
                 }
 
                 // combineLatest will emit whenever any of the node validation observables emit
-                return combineLatest(nodeValidations)
-                    .pipe(
-                        map(results => {
-                            // Combine all validation results into one
-                            const combinedResult = results.reduce((acc, result) => ({
-                                isValid: acc.isValid && result.isValid,
-                                errors: [...acc.errors, ...result.errors]
-                            }), VALID_RESULT);
-                            
-                            return combinedResult;
-                        })
-                    );
-            }),
-            shareReplay({ bufferSize: 1, refCount: true }),
-            takeUntil(destroyed$)
+                return combineLatest(nodeValidations).pipe(
+                    map(results => results.reduce((acc, result) => ({
+                        isValid: acc.isValid && result.isValid,
+                        errors: [...acc.errors, ...result.errors]
+                    }), VALID_RESULT)),
+                    catchError(error => {
+                        console.error(`Node tree validation error:`, error);
+                        return of(VALID_RESULT);
+                    }),
+                    // Until every validator of this tree has answered (metadata may still be loading) the tree
+                    // is not valid; without this the verdict of the previous tree would stay in effect
+                    startWith({ isValid: false, errors: [] as string[] })
+                );
+            })
         );
 
         return combineLatest([treeValidation$, nodesValidation$]).pipe(
-            map(([treeValidation, nodesValidation]) => {
+            map(([treeValidation, nodesValidation]) => ({
                 // Make sure overall validation fails if any node validation fails
-                const isValid = treeValidation.isValid && nodesValidation.isValid;
-                const errors = [...treeValidation.errors, ...nodesValidation.errors];
-                
-                return {
-                    isValid,
-                    errors
-                };
-            }),
-            catchError(error => {
-                console.error(`Node tree validation error:`, error);
-                return of(VALID_RESULT);
-            }),
-            shareReplay({ bufferSize: 1, refCount: true }),
-            takeUntil(destroyed$)
+                isValid: treeValidation.isValid && nodesValidation.isValid,
+                errors: [...treeValidation.errors, ...nodesValidation.errors]
+            }))
         );
     }
 } 

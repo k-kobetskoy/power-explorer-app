@@ -36,7 +36,8 @@ export class PicklistEntityService extends BaseRequestService {
           map(({ Options }) => Options.map(({ Value, Label }): PicklistModel =>
             ({ value: Value, label: Label?.UserLocalizedLabel ? Label.UserLocalizedLabel.Label : '' }))),
           tap(data => this.cacheService.setItem<PicklistModel[]>(data, key)),
-          tap(() => isLoading ? this.getPicklistOptionsIsLoading$.next(false) : null)
+          tap(() => isLoading ? this.getPicklistOptionsIsLoading$.next(false) : null),
+          this.waitForSignIn(this.getPicklistOptionsIsLoading$)
         );
       })
     );

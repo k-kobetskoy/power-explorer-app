@@ -1,6 +1,6 @@
-import { Component, OnChanges, OnDestroy, OnInit, SimpleChanges, ChangeDetectionStrategy, Input, ChangeDetectorRef } from '@angular/core';
+import { Component, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, Input, ChangeDetectorRef } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { Observable, Subject, debounceTime, distinctUntilChanged, map, startWith, switchMap, takeUntil, combineLatest, of, catchError, filter, finalize, BehaviorSubject, tap } from 'rxjs';
+import { Observable, Subject, debounceTime, distinctUntilChanged, map, startWith, switchMap, takeUntil, combineLatest, of, catchError, filter, finalize, BehaviorSubject, tap, EMPTY } from 'rxjs';
 import { AttributeModel } from 'src/app/models/incoming/attrubute/attribute-model';
 import { AttributeEntityService } from '../../../services/entity-services/attribute-entity.service';
 import { BaseFormComponent } from '../base-form.component';
@@ -41,7 +41,7 @@ import { NodeActionsComponent } from '../node-actions/node-actions.component';
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 
-export class AttributeFormComponent extends BaseFormComponent implements OnInit, OnDestroy, OnChanges {
+export class AttributeFormComponent extends BaseFormComponent implements OnDestroy, OnChanges {
   private destroy$ = new Subject<void>();
 
   @Input() selectedNode: QueryNode;
@@ -64,10 +64,6 @@ export class AttributeFormComponent extends BaseFormComponent implements OnInit,
   ) {
     super();
     this.isLoadingAttributes$ = this.attributeService.getAttributesIsLoading$;
-  }
-
-  ngOnInit() {
-    this.initializeForm();
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -116,23 +112,16 @@ export class AttributeFormComponent extends BaseFormComponent implements OnInit,
       { editorName: this.aliasInputName, control: this.aliasInputName }
     ];
 
-    selectedNode.attributes$.pipe(
-      distinctUntilChanged((prev, curr) => prev.length === curr.length),
-      takeUntil(this.destroy$),
-      filter(attributes => attributes.length > 0),
-    ).subscribe(attributes => {
-      controlBindings.forEach(({ editorName, control }) => {
-        const attr = attributes.find(a => a.editorName === editorName);
-        if (attr) {
-          attr.value$.pipe(
-            takeUntil(this.destroy$),
-            distinctUntilChanged()
-          ).subscribe(value => {
-            const formValue = this.attributeForm.get(control).value;
-            if (formValue !== value) {
-              this.attributeForm.get(control).setValue(value, { emitEvent: false });
-            }
-          });
+    controlBindings.forEach(({ editorName, control }) => {
+      selectedNode.attributes$.pipe(
+        map(attributes => attributes.find(a => a.editorName === editorName)),
+        distinctUntilChanged(),
+        switchMap(attr => attr ? attr.value$.pipe(distinctUntilChanged()) : EMPTY),
+        takeUntil(this.destroy$),
+      ).subscribe(value => {
+        const formValue = this.attributeForm.get(control).value;
+        if (formValue !== value) {
+          this.attributeForm.get(control).setValue(value, { emitEvent: false });
         }
       });
     });

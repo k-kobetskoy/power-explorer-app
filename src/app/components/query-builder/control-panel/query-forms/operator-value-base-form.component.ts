@@ -1,18 +1,16 @@
-import { Input, OnChanges, OnDestroy, OnInit, SimpleChanges, Component, AfterViewInit, ChangeDetectionStrategy } from '@angular/core';
+import { Input, OnChanges, OnDestroy, SimpleChanges, Component, ChangeDetectionStrategy } from '@angular/core';
 import { FormControl } from '@angular/forms';
 import { Subject, BehaviorSubject } from 'rxjs';
 import { distinctUntilChanged, takeUntil } from 'rxjs/operators';
 import { AttributeNames } from 'src/app/components/query-builder/models/constants/attribute-names';
 import { AttributeData } from '../../models/constants/attribute-data';
-import { FilterStaticData } from '../../models/constants/ui/filter-static-data';
 import { QueryNode } from '../../models/query-node';
 import { BaseFormComponent } from './base-form.component';
 import { MultiValueNodesService } from '../../services/multi-value-nodes.service';
 
 @Component({ template: '', changeDetection: ChangeDetectionStrategy.OnPush })
-export class OperatorValueBaseFormComponent extends BaseFormComponent implements OnInit, OnDestroy, OnChanges, AfterViewInit {
+export class OperatorValueBaseFormComponent extends BaseFormComponent implements OnDestroy, OnChanges {
     protected destroy$ = new Subject<void>();
-    private previousAttributeValue: string;
 
    // operatorFormControl = new FormControl(FilterStaticData.FilterBooleanOperators[0].value);
     operatorFormControl = new FormControl('');
@@ -32,28 +30,10 @@ export class OperatorValueBaseFormComponent extends BaseFormComponent implements
         super();
     }
 
-    ngOnInit() {
-        this.initializeForm();
-        
-        // Setup multi-value functionality if service is available
-        if (this.multiValueNodesService) {
-            this.setupMultiValueHandling();
-        }
-    }
-
-    ngAfterViewInit() {
-        setTimeout(() => {
-            this.applyCurrentValues();
-        });
-    }
-
+    // The only initialization point: runs when the form gets its node and every time the node
+    // or the condition attribute changes. Forms are reused, so nothing may survive from the previous node
     ngOnChanges(changes: SimpleChanges) {
-        if (changes['attributeValue'] && this.attributeValue !== this.previousAttributeValue) {
-            this.previousAttributeValue = this.attributeValue;
-            this.destroy$.next();
-            this.initializeForm();
-        }
-        else if (changes['selectedNode'] && this.selectedNode) {
+        if ((changes['selectedNode'] || changes['attributeValue']) && this.selectedNode) {
             this.destroy$.next();
             this.initializeForm();
         }
@@ -63,37 +43,19 @@ export class OperatorValueBaseFormComponent extends BaseFormComponent implements
 
         if (!this.selectedNode) return;
 
+        this.operatorFormControl.reset('', { emitEvent: false });
+        this.valueFormControl.reset('', { emitEvent: false });
+        this.multiValueControl.reset('', { emitEvent: false });
+
+        // Emits the current attributes right away, which fills the controls
         this.setupModelToFormBindings();
-        this.setupFormToModelBindings();      
-        
-        
+        this.setupFormToModelBindings();
 
-        if (this.multiValueNodesService && this.isMultiValueOperator(this.operatorFormControl.value)) {
-            this.showMultiValueInput$.next(true);
-            this.multiValueControl.setValue('', { emitEvent: false });
-        } else {
-            this.showMultiValueInput$.next(false);
-        }
-    }
-
-    private applyCurrentValues() {
-        const operator = this.getAttribute(AttributeData.Condition.Operator, this.selectedNode);
-        const value = this.getAttribute(AttributeData.Condition.Value, this.selectedNode);
-
-        if (!operator) {
-            this.operatorFormControl.setValue(FilterStaticData.FilterBooleanOperators[0].value, { emitEvent: false });
-            this.updateAttribute(AttributeData.Condition.Operator, this.selectedNode, FilterStaticData.FilterBooleanOperators[0].value);
-        }
-        else if (operator.value$.value && operator.value$.value !== this.operatorFormControl.value) {
-            this.operatorFormControl.setValue(operator.value$.value, { emitEvent: false });
+        if (this.multiValueNodesService) {
+            this.setupMultiValueHandling();
         }
 
-        if (!value) {
-            this.valueFormControl.setValue(null, { emitEvent: false });
-        }
-        else if (value.value$.value && value.value$.value !== this.valueFormControl.value) {
-            this.valueFormControl.setValue(value.value$.value, { emitEvent: false });
-        }
+        this.showMultiValueInput$.next(!!this.multiValueNodesService && this.isMultiValueOperator(this.operatorFormControl.value));
     }
 
     protected setupModelToFormBindings() {
@@ -125,18 +87,14 @@ export class OperatorValueBaseFormComponent extends BaseFormComponent implements
     }
 
     protected setupFormToModelBindings() {
+        // No distinctUntilChanged here and below: the model also changes the controls (without an event),
+        // so a value equal to the last emitted one can still be a change
         this.operatorFormControl.valueChanges
             .pipe(
-                distinctUntilChanged(),
                 takeUntil(this.destroy$)
             )
             .subscribe(value => {
                 if (value !== undefined) {
-                    // First clear any existing value nodes to ensure clean state
-                    if (this.multiValueNodesService) {
-                        this.multiValueNodesService.clearValueNodes(this.selectedNode);
-                    }
-                    
                     // Update the operator attribute
                     this.updateAttribute(AttributeData.Condition.Operator, this.selectedNode, value);
                     
@@ -152,7 +110,6 @@ export class OperatorValueBaseFormComponent extends BaseFormComponent implements
 
         this.valueFormControl.valueChanges
             .pipe(
-                distinctUntilChanged(),
                 takeUntil(this.destroy$)
             )
             .subscribe(value => {

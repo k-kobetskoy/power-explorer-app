@@ -1,0 +1,48 @@
+/**
+ * Which addresses count as a Dataverse environment. Used by the main process, which enforces it,
+ * and by the connection dialog, so no Node or Electron imports here.
+ */
+
+import type { EnvironmentModel } from './types';
+
+// Host name endings of the commercial and GCC clouds. Other sovereign clouds need their own
+// sign-in authority besides an entry here
+export const DATAVERSE_HOST_SUFFIXES = ['.dynamics.com'];
+
+export function isDataverseHost(hostname: string): boolean {
+    return DATAVERSE_HOST_SUFFIXES.some(suffix => hostname.endsWith(suffix));
+}
+
+/**
+ * The origin of an https address of a Dataverse host without port, path or credentials; null otherwise.
+ * Use the returned value, not the input: the URL parser accepts more spellings than the origin has.
+ */
+export function dataverseOrigin(address: unknown): string | null {
+    if (typeof address !== 'string') return null;
+    // The parser would silently drop or rewrite these. Spaces around the address are harmless
+    if (/[\p{Cc}\\]/u.test(address) || /\s/.test(address.trim())) return null;
+
+    let parsed: URL;
+    try {
+        parsed = new URL(address);
+    } catch {
+        return null;
+    }
+
+    const bare = parsed.protocol === 'https:' && !parsed.port && !parsed.username && !parsed.password
+        && parsed.pathname === '/' && !parsed.search && !parsed.hash;
+
+    return bare && isDataverseHost(parsed.hostname) ? parsed.origin : null;
+}
+
+/** The known fields of a model received from outside, addresses reduced to origins; null when invalid. */
+export function toEnvironmentModel(value: unknown): EnvironmentModel | null {
+    const model = value as EnvironmentModel;
+    const url = dataverseOrigin(model?.url);
+    const apiUrl = dataverseOrigin(model?.apiUrl);
+    if (!url || !apiUrl || typeof model.friendlyName !== 'string' || typeof model.urlName !== 'string') {
+        return null;
+    }
+
+    return { url, apiUrl, friendlyName: model.friendlyName, urlName: model.urlName };
+}

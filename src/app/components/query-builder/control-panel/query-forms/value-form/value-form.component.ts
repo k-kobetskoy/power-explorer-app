@@ -1,4 +1,4 @@
-import { Component, Input, OnChanges, OnDestroy, OnInit, SimpleChanges } from '@angular/core';
+import { Component, Input, OnChanges, OnDestroy, SimpleChanges } from '@angular/core';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { Subject } from 'rxjs';
 import { distinctUntilChanged, takeUntil } from 'rxjs/operators';
@@ -23,26 +23,16 @@ import { NodeActionsComponent } from '../node-actions/node-actions.component';
   templateUrl: './value-form.component.html',
   styles: []
 })
-export class ValueFormComponent extends BaseFormComponent implements OnInit, OnDestroy, OnChanges {
+export class ValueFormComponent extends BaseFormComponent implements OnDestroy, OnChanges {
   protected destroy$ = new Subject<void>();
-  private previousAttributeValue: string;
 
   valueFormControl = new FormControl('');
 
   @Input() attributeValue: string;
   @Input() selectedNode: QueryNode;
 
-  ngOnInit() {
-    this.initializeForm();
-  }
-
   ngOnChanges(changes: SimpleChanges) {
-    if (changes['attributeValue'] && this.attributeValue !== this.previousAttributeValue) {
-      this.previousAttributeValue = this.attributeValue;
-      this.destroy$.next();
-      this.initializeForm();
-    }
-    else if (changes['selectedNode'] && this.selectedNode) {
+    if ((changes['selectedNode'] || changes['attributeValue']) && this.selectedNode) {
       this.destroy$.next();
       this.initializeForm();
     }
@@ -60,12 +50,7 @@ export class ValueFormComponent extends BaseFormComponent implements OnInit, OnD
   private applyCurrentValues() {
     const value = this.getAttribute(AttributeData.Value.InnerText, this.selectedNode);
 
-    if (!value) {
-      this.valueFormControl.setValue(null, { emitEvent: false });
-    }
-    else if (value.value$.value && value.value$.value !== this.valueFormControl.value) {
-      this.valueFormControl.setValue(value.value$.value, { emitEvent: false });
-    }
+    this.valueFormControl.reset(value?.value$.value ?? '', { emitEvent: false });
   }
 
   protected setupModelToFormBindings() {

@@ -1,6 +1,8 @@
-import { Component, EventEmitter, OnInit, Output, OnDestroy, ViewEncapsulation, ChangeDetectionStrategy, NO_ERRORS_SCHEMA, CUSTOM_ELEMENTS_SCHEMA, ChangeDetectorRef, Inject } from '@angular/core';
+import { Component, EventEmitter, OnInit, Output, OnDestroy, ViewEncapsulation, ChangeDetectionStrategy, NO_ERRORS_SCHEMA, CUSTOM_ELEMENTS_SCHEMA, ChangeDetectorRef, Inject, ElementRef, ViewChild } from '@angular/core';
 import {  Subscription, takeUntil, tap, Subject, BehaviorSubject } from 'rxjs';
-import { MatTableRawData, XmlExecutorService } from '../services/xml-executor.service';
+import { ExecutionState, MatTableRawData, QueryContinuation, XmlExecutorService } from '../services/xml-executor.service';
+import { DEFAULT_PAGE_SIZE_OPTIONS, FALLBACK_PAGE_SIZE, PageSizePreference, fitPageSize } from './page-size';
+import { MatButtonModule } from '@angular/material/button';
 import { NodeTreeService } from '../services/node-tree.service';
 import { QueryNode } from '../models/query-node';
 import { CommonModule } from '@angular/common';
@@ -10,7 +12,6 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatTableModule } from '@angular/material/table';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { ExternalLinkService } from '../../../services/external-link.service';
 import { EnvironmentModel } from 'src/app/models/environment-model';
 import { ACTIVE_ENVIRONMENT_MODEL } from 'src/app/models/tokens';
@@ -28,6 +29,7 @@ import { AngularSplitModule } from 'angular-split';
         MatProgressBarModule,
         MatIconModule,
         MatPaginatorModule,
+        MatButtonModule,
         RawResultPanelComponent,
         AngularSplitModule,
     ],
@@ -51,16 +53,13 @@ export class ResultTableComponent implements OnInit, OnDestroy {
   
   // Pagination properties
   paginatedData: any[] = [];
-  pageSize = 50;
-  pageSizeOptions: number[] = [10, 25, 50, 100];
+  pageSize = FALLBACK_PAGE_SIZE;
+  pageSizeOptions: number[] = [...DEFAULT_PAGE_SIZE_OPTIONS];
   pageIndex = 0;
   totalRows = 0;
 
   // Store the complete result data
   resultData: MatTableRawData | null = null;
-  
-  // Local BehaviorSubject to store the most recent result
-  private mostRecentResult = new BehaviorSubject<MatTableRawData | null>(null);
   
   // BehaviorSubject for raw result panel
   dataSourceSubject = new BehaviorSubject<any>(null);
@@ -71,28 +70,26 @@ export class ResultTableComponent implements OnInit, OnDestroy {
   hasError = false;
   errorMessage = '';
 
+  // Set while Dataverse has more rows than the table holds
+  continuation: QueryContinuation | null = null;
+  isLoadingMore = false;
+  private executionId: number | undefined;
+
+  @ViewChild('tableScroll') private tableScroll: ElementRef<HTMLElement>;
+
   // Track current environment URL
   private currentEnvironmentUrl: string = '';
   private environmentSubscription: Subscription;
 
-  // Result subscription
-  private resultSubscription: Subscription;
-  
-  // Add execution state subscription
-  private executionStateSubscription: Subscription;
-
   // Add destroy$ Subject
   private destroy$ = new Subject<void>();
   
-  // Store reference to the event listener
-  private externalLinkEventListener: EventListener;
-
   constructor(
     private xmlExecutor: XmlExecutorService,
     private nodeTreeService: NodeTreeService,
     private cdr: ChangeDetectorRef,
-    private sanitizer: DomSanitizer,
     private externalLinkService: ExternalLinkService,
+    private pageSizePreference: PageSizePreference,
     @Inject(ACTIVE_ENVIRONMENT_MODEL) private activeEnvironmentModel: BehaviorSubject<EnvironmentModel>
   ) {
     this.destroy$ = new Subject<void>();
@@ -103,92 +100,14 @@ export class ResultTableComponent implements OnInit, OnDestroy {
 
     this.rawDataverseResult = this.xmlExecutor.getRawDataverseRawResult();
     
-    this.rawDataverseResult.subscribe(result => {
-      this.dataSourceSubject.next(result);
-    });
-    // Check the initial loading state
-    this.isLoading = this.xmlExecutor.isLoading();
-    
-    // Create and store event listener
-    this.externalLinkEventListener = ((event: CustomEvent) => {
-      if (event.detail) {
-        this.openExternalLink(event.detail);
-      }
-    }) as EventListener;
-    
-    // Add event listener for external links
-    window.addEventListener('openExternalLink', this.externalLinkEventListener);
-    
-    // Subscribe to our local result observable instead of cache service
-    this.resultSubscription = this.mostRecentResult
+    this.rawDataverseResult
       .pipe(takeUntil(this.destroy$))
-      .subscribe(result => {
-        // Update loading state with each result update
-        this.isLoading = this.xmlExecutor.isLoading();
-        
-        if (!result) {
-          this.displayedColumns = ['No results available'];
-          this.dataSource = [];
-          this.cdr.markForCheck();
-          return;
-        }
-        
-        // Only process results when not in loading state and no errors
-        if (!this.isLoading && !this.hasError && result.rows?.length > 0) {
-          this.resultData = result;
-          this.processResultData();
-          this.cdr.markForCheck();
-        } else if (this.hasError) {
-          // Show error in table
-          this.displayedColumns = ['Error'];
-          this.dataSource = [{ 'Error': this.errorMessage || 'An error occurred' }];
-          this.cdr.markForCheck();
-        } else if (!this.isLoading && (!result.rows || result.rows.length === 0)) {
-          // Show no results message
-          this.displayedColumns = ['No results'];
-          this.dataSource = [];
-          this.cdr.markForCheck();
-        }
-      });
-    
-    // Subscribe to loading state changes to detect new executions
-    this.executionStateSubscription = this.xmlExecutor.isLoadingState$
+      .subscribe(result => this.dataSourceSubject.next(result));
+
+    // The table is drawn from the execution state only
+    this.xmlExecutor.state$
       .pipe(takeUntil(this.destroy$))
-      .subscribe(isLoading => {
-        this.isLoading = isLoading;
-        
-        // Reset error state when a new execution starts
-        if (isLoading) {
-          this.hasError = false;
-          this.errorMessage = '';
-          this.cdr.markForCheck();
-        } else {
-          // When loading finishes
-          // Check for errors when loading completes
-          const error = this.xmlExecutor.getLastError();
-          if (error) {
-            this.hasError = true;
-            this.errorMessage = typeof error === 'string' 
-              ? error 
-              : ((error as any)?.message || 'An error occurred during execution');
-            
-            // Show error in table
-            this.displayedColumns = ['Error'];
-            this.dataSource = [{ 'Error': this.errorMessage }];
-            this.cdr.markForCheck();
-          } else {
-            // No error - if we have recent results, they should be in our local BehaviorSubject already
-            
-            // The most recent result should already be in our local BehaviorSubject
-            const currentResult = this.mostRecentResult.value;
-            if (currentResult && currentResult.rows?.length > 0) {
-              this.resultData = currentResult;
-              this.processResultData();
-            }
-          }
-          this.cdr.markForCheck();
-        }
-      });
+      .subscribe(state => this.applyState(state));
 
     // Subscribe to environment changes for URL building
     this.environmentSubscription = this.activeEnvironmentModel
@@ -217,21 +136,14 @@ export class ResultTableComponent implements OnInit, OnDestroy {
             this.refreshDataSource();
           }
         }
+        // whether more rows can be loaded depends on the active environment
+        this.cdr.markForCheck();
       });
   }
 
   ngOnDestroy() {
-    // Remove event listener using the stored reference
-    window.removeEventListener('openExternalLink', this.externalLinkEventListener);
-    
     if (this.environmentSubscription) {
       this.environmentSubscription.unsubscribe();
-    }
-    if (this.resultSubscription) {
-      this.resultSubscription.unsubscribe();
-    }
-    if (this.executionStateSubscription) {
-      this.executionStateSubscription.unsubscribe();
     }
     // Complete the destroy$ Subject
     this.destroy$.next();
@@ -239,83 +151,75 @@ export class ResultTableComponent implements OnInit, OnDestroy {
   }
 
   getResult() {
-    // Reset error state when getting new results
-    this.hasError = false;
-    this.errorMessage = '';
-    
-    // Set loading state
-    this.isLoading = true;
-    this.cdr.markForCheck();
-    
     // Check if we have a stored result already
     if (this.resultData && this.resultData.rows && this.resultData.rows.length > 0) {
-      this.isLoading = false;
       this.processResultData();
       this.cdr.markForCheck();
       return;
     }
-    
+
     // Emit the event for parent components to handle
     this.resultTableGetResult.emit();
-    
-    // Try to get current XML for direct execution
-    try {
-      // Get current XML and node from nodeTreeService
-      const xml = this.nodeTreeService.xmlRequest$.value;
-      const entityNode = this.getEntityNode();
-      
-      // Validate we have both valid XML and entity node before attempting execution
-      if (!xml) {
-        this.isLoading = false;
-        this.hasError = true;
-        this.errorMessage = 'No query defined';
-        this.displayedColumns = ['Error'];
-        this.dataSource = [{ 'Error': this.errorMessage }];
-        this.cdr.markForCheck();
-        return;
-      }
-      
-      if (!entityNode || !entityNode.entitySetName$ || !entityNode.entitySetName$.value) {
-        this.isLoading = false;
-        this.hasError = true;
-        this.errorMessage = 'No entity selected';
-        this.displayedColumns = ['Error'];
-        this.dataSource = [{ 'Error': this.errorMessage }];
-        this.cdr.markForCheck();
-        return;
-      }
-      
-      if (xml && entityNode) {
-        // Execute the query and subscribe to the result
-        this.xmlExecutor.executeXmlRequest(xml, entityNode)
-          .pipe(takeUntil(this.destroy$))
-          .subscribe(
-            result => {
-              
-              // Store the result in our local BehaviorSubject for components to use
-              this.mostRecentResult.next(result);
-              
-              // For immediate feedback, process the result directly
-              if (result && result.rows && result.rows.length > 0) {
-                this.resultData = result;            
-                this.processResultData();
-              }
-            },
-            error => {
-              // Error will be handled by our isLoadingState$ subscription
-              console.error('Error in direct execution:', error);
-            }
-          );
-      }
-    } catch (error) {
-      this.hasError = true;
-      this.errorMessage = error?.message || 'Error in query execution';
-      this.isLoading = false;
-      this.cdr.markForCheck();
-    }
+
+    this.executeWithData(this.nodeTreeService.xmlRequest$.value, this.getEntityNode());
   }
 
-  private processResultData() {
+  private applyState(state: ExecutionState) {
+    this.isLoading = state.status === 'loading';
+    this.hasError = state.status === 'requestError' || state.status === 'processingError';
+    this.errorMessage = state.status === 'requestError' || state.status === 'processingError' ? state.message : '';
+
+    if (state.status === 'rows') {
+      this.continuation = state.continuation ?? null;
+      this.isLoadingMore = !!state.isLoadingMore;
+      if (state.loadMoreError) {
+        this.hasError = true;
+        this.errorMessage = state.loadMoreError.message;
+      }
+
+      // further states of the same execution keep the page the user is on
+      const isSameExecution = state.executionId !== undefined && state.executionId === this.executionId;
+      if (!isSameExecution || state.result !== this.resultData) {
+        this.executionId = state.executionId;
+        this.resultData = state.result;
+        this.processResultData(isSameExecution);
+      }
+    } else {
+      this.clearResult();
+      if (state.status === 'idle') {
+        this.displayedColumns = ['No results available'];
+      } else if (state.status === 'empty') {
+        this.displayedColumns = ['No results'];
+      }
+    }
+
+    this.cdr.markForCheck();
+  }
+
+  get canLoadMore(): boolean {
+    return this.activeEnvironmentModel.value?.url === this.continuation?.environmentUrl;
+  }
+
+  loadMore() {
+    this.xmlExecutor.loadMore();
+  }
+
+  private clearResult() {
+    this.continuation = null;
+    this.isLoadingMore = false;
+    this.resultData = null;
+    this.selectedRow = null;
+    this.selectedOverflowCell = null;
+    this.selectedColumn = null;
+    this.displayedColumns = [];
+    this.dataSource = [];
+    this.paginatedData = [];
+    this.totalRows = 0;
+    this.pageIndex = 0;
+    this.formattedDataverseResult.next(null);
+  }
+
+  private processResultData(keepPage = false) {
     if (!this.resultData) {
       this.displayedColumns = ['No data'];
       this.dataSource = [];
@@ -357,9 +261,13 @@ export class ResultTableComponent implements OnInit, OnDestroy {
       this.displayedColumns = ['No.', ...headerColumns];
     }
 
+    if (!keepPage && this.pageSizePreference.userPageSize) {
+      this.setPageSize(this.pageSizePreference.userPageSize);
+    }
+
     // Set the data source based on the toggle state
-    this.refreshDataSource();
-    
+    this.refreshDataSource(keepPage);
+
     // Force change detection immediately
     this.cdr.markForCheck();
     this.cdr.detectChanges();
@@ -368,7 +276,34 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     setTimeout(() => {
       this.cdr.markForCheck();
       this.cdr.detectChanges();
+      // the table is on screen now and can be measured
+      if (!keepPage) {
+        this.fitPageSizeToTable();
+      }
     }, 0);
+  }
+
+  private fitPageSizeToTable() {
+    const container = this.tableScroll?.nativeElement;
+    const row = container?.querySelector('tr.mat-mdc-row');
+
+    if (!row || this.pageSizePreference.userPageSize) {
+      return;
+    }
+
+    const headerHeight = container.querySelector('tr.mat-mdc-header-row')?.getBoundingClientRect().height ?? 0;
+    // clientHeight leaves out a horizontal scrollbar; 0 means the panel is not shown
+    const rowsAreaHeight = container.clientHeight ? Math.max(1, container.clientHeight - headerHeight) : 0;
+
+    this.setPageSize(fitPageSize(rowsAreaHeight, row.getBoundingClientRect().height));
+    this.updatePaginatedData();
+    this.cdr.detectChanges();
+  }
+
+  private setPageSize(pageSize: number) {
+    this.pageSize = pageSize;
+    // mat-paginator shows an empty selection for a size that is not among the options
+    this.pageSizeOptions = [...new Set([...DEFAULT_PAGE_SIZE_OPTIONS, pageSize])].sort((a, b) => a - b);
   }
 
   private getEntityNode(): QueryNode {
@@ -541,21 +476,9 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     }
   }
 
-  formatCellValue(row: any, columnName: string): string | SafeHtml {
+  formatCellValue(row: any, columnName: string): string {
     if (!this.resultData || !row) {
       return row ? row[columnName]?.toString() || '' : '';
-    }
-
-    // For row numbers with entity links
-    if (columnName === 'No.') {
-      const rowData = row['__rowData'];
-      if (rowData && rowData.dataverseRowLink) {
-        // Return a custom link that uses our externalLinkService
-        return this.sanitizer.bypassSecurityTrustHtml(
-          `<a href="javascript:void(0)" onclick="window.dispatchEvent(new CustomEvent('openExternalLink', { detail: '${rowData.dataverseRowLink}' }))" class="row-number-link">${row[columnName]}</a>`
-        );
-      }
-      return row[columnName]?.toString() || '';
     }
 
     // For attributes in the new format
@@ -617,7 +540,7 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     }
   }
 
-  private refreshDataSource() {
+  private refreshDataSource(keepPage = false) {
     if (!this.resultData || !this.resultData.rows) {
       this.dataSource = [];
       this.paginatedData = [];
@@ -677,8 +600,10 @@ export class ResultTableComponent implements OnInit, OnDestroy {
       // Update total rows
       this.totalRows = this.dataSource.length;
       
-      // Reset to first page when data source changes
-      this.pageIndex = 0;
+      // Reset to first page when data source changes, unless rows were only appended
+      if (!keepPage) {
+        this.pageIndex = 0;
+      }
       
       // Update paginated view
       this.updatePaginatedData();
@@ -695,6 +620,10 @@ export class ResultTableComponent implements OnInit, OnDestroy {
 
   // Handle page events from the paginator
   onPageChange(event: PageEvent) {
+    // a size picked by the user wins over the fitted one
+    if (event.pageSize !== this.pageSize) {
+      this.pageSizePreference.userPageSize = event.pageSize;
+    }
     this.pageSize = event.pageSize;
     this.pageIndex = event.pageIndex;
     
@@ -715,36 +644,8 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     this.cdr.markForCheck();
   }
 
-  executeWithData(xml: string, entityNode: any) {
-    // Reset error state
-    this.hasError = false;
-    this.errorMessage = '';
-    
-    // Set loading state
-    this.isLoading = true;
-    this.cdr.markForCheck();
-    
-    
-    // Execute the query directly with the provided data
-    this.xmlExecutor.executeXmlRequest(xml, entityNode)
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(
-        result => {
-          
-          // Store the result in our local BehaviorSubject for components to use
-          this.mostRecentResult.next(result);
-          
-          // For immediate feedback, process the result directly
-          if (result && result.rows && result.rows.length > 0) {
-            this.resultData = result;
-            this.processResultData();
-          }
-        },
-        error => {
-          // Error will be handled by our isLoadingState$ subscription
-          console.error('Error in direct execution with provided data:', error);
-        }
-      );
+  executeWithData(xml: string, entityNode: QueryNode) {
+    this.xmlExecutor.execute(xml, entityNode);
   }
 
   togglePanel() {

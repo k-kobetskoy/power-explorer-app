@@ -5,4 +5,5 @@
 </div>
 <div mat-dialog-actions align="end">
   <button mat-button (click)="close()">Close</button>
+  <button mat-flat-button color="primary" *ngIf="data.actionLabel" [mat-dialog-close]="true">{{data.actionLabel}}</button>
 </div> 

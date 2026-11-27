@@ -1,11 +1,12 @@
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, Observable, of, Subscription } from 'rxjs';
+import { BehaviorSubject, Observable, of, Subject, Subscription } from 'rxjs';
 import { QueryNodeTree } from '../models/query-node-tree';
 import { AppEvents } from 'src/app/services/event-bus/app-events';
 import { EventBusService } from 'src/app/services/event-bus/event-bus.service';
 import { QueryNode } from '../models/query-node';
 import { QueryNodeData } from '../models/constants/query-node-data';
-import { ValueAttributeData } from '../models/constants/attribute-data';
+import { ConditionAttributeData, ValueAttributeData } from '../models/constants/attribute-data';
+import { FilterStaticData } from '../models/constants/ui/filter-static-data';
 import { NodeFactoryService } from './attribute-services/node-factory.service';
 import { VALID_RESULT, ValidationResult, ValidationService } from './validation.service';
 import { AttributeNames } from '../models/constants/attribute-names';
@@ -18,10 +19,21 @@ export class NodeTreeService {
 
   private _selectedNode$: BehaviorSubject<QueryNode> = new BehaviorSubject<QueryNode>(null);
 
+  /** Validation of the whole query. One stream for the lifetime of the service; it follows tree replacements. */
   validationResult$: Observable<ValidationResult>;
 
-  // Track validation subscription for cleanup
+  // Keeps the validation active even if the UI doesn't subscribe yet
   private validationSubscription: Subscription = null;
+
+  private _treeChanged$ = new Subject<void>();
+
+  /**
+   * Emits when the query changes: a node is added or removed, or an attribute of a node is added,
+   * removed or changes its value. Not emitted for a tree replaced by Parse (see replaceNodeTree).
+   */
+  public get treeChanged$(): Observable<void> {
+    return this._treeChanged$.asObservable();
+  }
 
   public get selectedNode$(): Observable<QueryNode> {
     return this._selectedNode$.asObservable();
@@ -45,21 +57,13 @@ export class NodeTreeService {
     this.setupValidation();
   }
 
-  public setupValidation() {
-
-    // Clean up any existing subscription
-    if (this.validationSubscription) {
-      this.validationSubscription.unsubscribe();
-      this.validationSubscription = null;
-    }
-
-    // Create a new validation observable with shareReplay to ensure all subscribers get the same values
+  private setupValidation() {
+    // shareReplay keeps the latest result for late subscribers (the Execute button)
     this.validationResult$ = this.validationService.setupNodeTreeValidation(this._nodeTree$)
       .pipe(
-        shareReplay({ bufferSize: 1, refCount: true })
+        shareReplay({ bufferSize: 1, refCount: false })
       );
 
-    // Subscribe to validation to keep it active even if the UI doesn't subscribe yet
     this.validationSubscription = this.validationResult$.subscribe();
   }
 
@@ -69,8 +73,6 @@ export class NodeTreeService {
     }
 
     this.initializeNodeTree();
-
-    this.setupValidation();
 
     return this._nodeTree$;
   }
@@ -85,6 +87,7 @@ export class NodeTreeService {
     const rootNode = this.nodeFactory.createNode(QueryNodeData.Fetch.NodeName, false, null);
 
     nodeTree.root = rootNode;
+    rootNode.onTreeChanged = () => this._treeChanged$.next();
 
     this._nodeTree$.next(nodeTree);
 
@@ -95,50 +98,6 @@ export class NodeTreeService {
     rootNode.addAttribute(attributeFactory.createAttribute(AttributeNames.rootTop, rootNode, false, '10'));
 
     this.addNode(QueryNodeData.Entity.NodeName);
-  }
-
-  addNodeFromParsing(newNodeName: string, parentNode: QueryNode = null): QueryNode {
-
-    const rootNode = this._nodeTree$.value?.root;
-
-    let newNode = this.nodeFactory.createNode(newNodeName, true, rootNode);
-
-    if (!this._nodeTree$.value) {
-      const nodeTree = new QueryNodeTree();
-
-      nodeTree.root = newNode;
-
-      this._nodeTree$.next(nodeTree);
-      this._selectedNode$.next(newNode);
-
-      // First-time setup of the validation is still needed
-      //this.setupValidation();
-
-      return newNode;
-    }
-
-    if (!parentNode) {
-      parentNode = this._selectedNode$.value;
-    }
-
-    let nodeAbove = this.getNodeAbove(newNode.order, parentNode);
-    let bottomNode = nodeAbove.next;
-
-    nodeAbove.next = newNode;
-    newNode.next = bottomNode;
-
-    newNode.level = parentNode.level + 1;
-    newNode.parent = parentNode;
-
-    if (parentNode) {
-      this.expandNode(parentNode);
-    }
-    this.selectedNode$ = newNode;
-
-    // Explicitly emit from nodeTree$ to ensure validation is triggered
-    this._nodeTree$.next(this._nodeTree$.value);
-
-    return newNode;
   }
 
   addNode(newNodeName: string, parent: QueryNode = null): QueryNode {
@@ -160,6 +119,10 @@ export class NodeTreeService {
     newNode.level = parentNode.level + 1;
     newNode.parent = parentNode;
 
+    // The default operator belongs to the new node; selecting a node never writes to it
+    if (newNodeName === QueryNodeData.Condition.NodeName) {
+      newNode.setAttribute(ConditionAttributeData.Operator, FilterStaticData.DefaultOperator);
+    }
 
     if (parent) {
       this.expandNode(parentNode);
@@ -173,6 +136,7 @@ export class NodeTreeService {
     this._nodeTree$.next(this._nodeTree$.value);
 
     this._eventBus.emit({ name: AppEvents.NODE_ADDED });
+    this._treeChanged$.next();
 
     if (newNodeName === QueryNodeData.Filter.NodeName) {
       const conditionNode = this.addNode(QueryNodeData.Condition.NodeName);
@@ -209,6 +173,7 @@ export class NodeTreeService {
     this._eventBus.emit({ name: AppEvents.NODE_ADDED });
 
     this._nodeTree$.next(this._nodeTree$.value);
+    this._treeChanged$.next();
 
     return valueNode;
   }
@@ -267,6 +232,7 @@ export class NodeTreeService {
     this._nodeTree$.next(this._nodeTree$.value);
 
     this._eventBus.emit({ name: AppEvents.NODE_REMOVED });
+    this._treeChanged$.next();
   }
 
   expandNode(node: QueryNode) {
@@ -320,28 +286,31 @@ export class NodeTreeService {
     return previousNode;
   }
 
-  clearNodeTree() {
-    const nodeTree = this._nodeTree$.value;
+  /**
+   * Replaces the whole tree in one step (used by Parse). The new tree must be fully built and detached:
+   * one nodeTree$ emission, the new root becomes the selected node, then the old tree is released.
+   * treeChanged$ is not emitted; the caller renders the XML itself.
+   */
+  replaceNodeTree(newTree: QueryNodeTree) {
+    const oldTree = this._nodeTree$.value;
 
-    // Cleanup current validation subscription
-    if (this.validationSubscription) {
-      this.validationSubscription.unsubscribe();
-      this.validationSubscription = null;
+    newTree.root.onTreeChanged = () => this._treeChanged$.next();
+
+    this._nodeTree$.next(newTree);
+    this._selectedNode$.next(newTree.root);
+
+    if (oldTree && oldTree !== newTree) {
+      if (oldTree.root) {
+        oldTree.root.onTreeChanged = null;
+      }
+
+      oldTree.destroyed$.next();
+      oldTree.destroyed$.complete();
+
+      for (const node of [...oldTree]) {
+        node.dispose();
+      }
     }
-
-    if (nodeTree && nodeTree.root) {
-      // First signal that tree is being destroyed to complete any ongoing validations
-      nodeTree.destroyed$.next();
-      nodeTree.destroyed$.complete();
-
-      // Then clean up all nodes
-      this.cleanupNodeAndChildren(nodeTree.root);
-    }
-
-    this._nodeTree$.next(null);
-    this._selectedNode$.next(null);
-
-    // Don't set up validation here - it will be set up after the new tree is built
   }
 
   getPrimaryEntityName(): string {
@@ -475,22 +444,15 @@ export class NodeTreeService {
   private cleanupNodeAndChildren(node: QueryNode): void {
     if (!node) return;
 
-    const nextNode = node.next;
-
-    // Properly dispose of the node to clean up all its subscriptions
+    // Dispose the node and its whole subtree (all following nodes with a deeper level)
+    let current = node.next;
     node.dispose();
 
-    // Recursively clean up any children nodes
-    if (nextNode && nextNode.level > node.level) {
-      this.cleanupNodeAndChildren(nextNode);
+    while (current && current.level > node.level) {
+      const next = current.next;
+      current.dispose();
+      current = next;
     }
-
-    // Don't complete the tree's destroyed$ subject here, as it would affect all validation
-    // subscriptions. We only want to complete it when the entire tree is being destroyed.
-  }
-
-  forceValidationToPass() {
-    this._eventBus.emit({ name: AppEvents.XML_PARSED, value: true });
   }
 }
 

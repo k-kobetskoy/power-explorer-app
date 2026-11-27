@@ -12,8 +12,6 @@ import { MatInputModule } from '@angular/material/input';
 import { ValidationResult } from '../services/validation.service';
 import { XmlExecutorService } from '../services/xml-executor.service';
 import { QueryRenderService } from '../services/query-render.service';
-import { EventBusService } from 'src/app/services/event-bus/event-bus.service';
-import { AppEvents } from 'src/app/services/event-bus/app-events';
 import { QueryNode } from '../models/query-node';
 import { MatTooltipModule } from '@angular/material/tooltip';
 // Define a safer event type
@@ -57,12 +55,11 @@ export class QueryTreeButtonBlockComponent implements OnInit, OnDestroy {
   constructor(
     private nodeTreeProcessor: NodeTreeService,
     private xmlExecutorService: XmlExecutorService,
-    private queryRenderService: QueryRenderService,
-    private eventBus: EventBusService
+    private queryRenderService: QueryRenderService
   ) { }
 
   ngOnInit() {
-    // Subscribe to the actual validation observable 
+    // One validation stream for the lifetime of NodeTreeService; it follows tree replacements by Parse
     this.nodeTreeProcessor.validationResult$
       .pipe(takeUntil(this.destroy$))
       .subscribe(validation => {
@@ -70,21 +67,6 @@ export class QueryTreeButtonBlockComponent implements OnInit, OnDestroy {
           this.validationState.next(validation);
         }
       });
-    
-    // Listen for XML_PARSED events
-    this.eventBus.on(AppEvents.XML_PARSED, event => {
-      // Force a recheck of validation state after parsing
-      setTimeout(() => {
-        this.nodeTreeProcessor.validationResult$
-          .pipe(take(1))
-          .subscribe(validation => {
-            // If valid, update the state
-            if (validation && validation.isValid) {
-              this.validationState.next(validation);
-            }
-          });
-      }, 200);
-    });
   }
 
   ngOnDestroy() {
@@ -97,24 +79,17 @@ export class QueryTreeButtonBlockComponent implements OnInit, OnDestroy {
   }
 
   execute() {
-    
-    // Render the XML query to ensure it's up to date
-    this.queryRenderService.renderXmlRequest();
-    
-    // Wait a moment for rendering to complete
-    setTimeout(() => {
-      // Get the current XML and entity node
-      const xml = this.nodeTreeProcessor.xmlRequest$.value;
-      const entityNode = this.nodeTreeProcessor.getNodeTree().value.root.next;
-      
-      if (!xml || !entityNode) {
-        console.error('Cannot execute query: XML or entity node is missing');
-        return;
-      }
-            
-      // Emit the event to notify parent component to execute the query
-      // The parent component will handle the actual execution
-      this.executeXmlRequest.emit({ xml, entityNode });
-    }, 50); // Short delay to ensure XML is rendered
+    // Render synchronously so the executed XML matches the tree as it is now
+    const xml = this.queryRenderService.renderXmlRequest();
+    const entityNode = this.nodeTreeProcessor.getNodeTree().value.root.next;
+
+    if (!xml || !entityNode) {
+      console.error('Cannot execute query: XML or entity node is missing');
+      return;
+    }
+
+    // Emit the event to notify parent component to execute the query
+    // The parent component will handle the actual execution
+    this.executeXmlRequest.emit({ xml, entityNode });
   }
 }
