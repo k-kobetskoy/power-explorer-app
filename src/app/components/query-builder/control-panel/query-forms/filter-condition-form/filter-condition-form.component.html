@@ -42,18 +42,21 @@
 
           <ng-container *ngIf="selectedAttribute$ | async as attribute; else elseBlock">
             <ng-container [ngSwitch]="getFilterOperatorType(attribute)">
-              <app-number-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.NUMBER'
-                [selectedNode]="selectedNode" [attributeValue]="attribute.logicalName"></app-number-form>
+              <app-scalar-value-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.NUMBER'
+                [filterType]="FilterOperatorTypes.NUMBER" [selectedNode]="selectedNode"
+                [attributeValue]="attribute.logicalName"></app-scalar-value-form>
               <app-boolean-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.BOOLEAN'
                 [selectedNode]="selectedNode" [attributeValue]="attribute.logicalName"></app-boolean-form>
-              <app-id-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.ID' [selectedNode]="selectedNode"
-                [attributeValue]="attribute.logicalName"></app-id-form>
+              <app-scalar-value-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.ID'
+                [filterType]="FilterOperatorTypes.ID" [selectedNode]="selectedNode"
+                [attributeValue]="attribute.logicalName"></app-scalar-value-form>
               <app-picklist-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.PICKLIST'
                 [selectedNode]="selectedNode" [attributeValue]="attribute.logicalName"></app-picklist-form>
               <app-status-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.STATUS'
                 [selectedNode]="selectedNode" [attributeValue]="attribute.logicalName"></app-status-form>
-              <app-date-time-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.DATE_TIME'
-                [selectedNode]="selectedNode" [attributeValue]="attribute.logicalName"></app-date-time-form>
+              <app-scalar-value-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.DATE_TIME'
+                [filterType]="FilterOperatorTypes.DATE_TIME" [selectedNode]="selectedNode"
+                [attributeValue]="attribute.logicalName"></app-scalar-value-form>
               <app-string-form class="input-full-width" *ngSwitchCase='FilterOperatorTypes.STRING'
                 [selectedNode]="selectedNode" [attributeValue]="attribute.logicalName"></app-string-form>
             </ng-container>

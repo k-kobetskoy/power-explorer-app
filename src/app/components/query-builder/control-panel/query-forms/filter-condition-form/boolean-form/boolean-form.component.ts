@@ -1,7 +1,6 @@
-import { AttributeNames } from 'src/app/components/query-builder/models/constants/attribute-names';
 import { ChangeDetectionStrategy, Component } from '@angular/core';
-import { BehaviorSubject, Observable, of } from 'rxjs';
-import { distinctUntilChanged, switchMap, takeUntil } from 'rxjs/operators';
+import { BehaviorSubject, Observable } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 import { BooleanModel } from 'src/app/models/incoming/boolean/boolean-model';
 import { BooleanEntityService } from '../../../../services/entity-services/boolean-entity.service';
 import { FilterStaticData } from '../../../../models/constants/ui/filter-static-data';
@@ -13,6 +12,7 @@ import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { MatOptionModule } from '@angular/material/core';
 import { MultiValueFormComponent } from '../multi-value-form/multi-value-form.component';
+import { parentEntityMetadata$ } from '../../helpers/entity-metadata';
 import { MatSelectModule } from '@angular/material/select';
 import { MatIconModule } from '@angular/material/icon';
 import { MatAutocompleteModule } from '@angular/material/autocomplete'; 
@@ -52,39 +52,15 @@ export class BooleanFormComponent extends OperatorValueBaseFormComponent {
 
   protected override initializeForm() {
     super.initializeForm();
-    this.setupBooleanOptions();
     this.isLoading$ = this.booleanService.getBooleanValuesIsLoading$;
+    this.setupBooleanOptions();
   }
 
   private setupBooleanOptions() {
-    const parentEntityNode = this.selectedNode.getParentEntity();
-
-    if (!parentEntityNode) {
-      this.booleanOptions$ = of(<BooleanModel>{});
-      return;
-    }
-
-    this.booleanOptions$ = parentEntityNode.validationResult$.pipe(
-      switchMap(validationResult => {
-        if (validationResult.isValid) {
-          return parentEntityNode.attributes$.pipe(
-            switchMap(attributes => {              
-              const entityAttribute = attributes.find(attr => attr.editorName === AttributeNames.entityName);
-              if (entityAttribute) {
-                return entityAttribute.value$.pipe(
-                  distinctUntilChanged(),
-                  switchMap(entityName => {
-                    return this.booleanService.getBooleanValues(entityName, this.attributeValue, true);
-                  })
-                );
-              }
-              return of(<BooleanModel>{});
-            })
-          );
-        }
-        return of(<BooleanModel>{});
-      }),
-      takeUntil(this.destroy$)
-    );
+    this.booleanOptions$ = parentEntityMetadata$<BooleanModel>(this.selectedNode.getParentEntity(), {
+      load: entityName => this.booleanService.getBooleanValues(entityName, this.attributeValue, true),
+      empty: null,
+      loading$: this.isLoading$
+    }).pipe(takeUntil(this.destroy$));
   }
 }

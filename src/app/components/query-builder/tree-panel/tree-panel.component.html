@@ -54,9 +54,9 @@
                   <img class="warning-icon" src="assets/icons/warning-gutter.svg" alt="warning">
                 </ng-container>
                 
-                <img class="remove-icon" *ngIf="(selectedNode$ | async) === node" (click)="removeNode(node)" src="assets/icons/x.svg" alt="x">
+                <img class="remove-icon" *ngIf="node.parent && (selectedNode$ | async) === node" (click)="removeNode(node)" src="assets/icons/x.svg" alt="x">
                 
-                <img class="remove-icon placeholder-icon" *ngIf="(selectedNode$ | async) !== node" src="assets/icons/x.svg" alt="x">                
+                <img class="remove-icon placeholder-icon" *ngIf="!node.parent || (selectedNode$ | async) !== node" src="assets/icons/x.svg" alt="x">                
               </div>
             </div>
           </div>
@@ -107,9 +107,9 @@
                 <ng-container *ngIf="!(node.validationResult$|async)?.isValid">
                   <img class="warning-icon" src="assets/icons/warning-gutter.svg" alt="warning">
                 </ng-container>
-                <img class="remove-icon" *ngIf="(selectedNode$ | async) === node" (click)="removeNode(node)" src="assets/icons/x.svg" alt="x">
+                <img class="remove-icon" *ngIf="node.parent && (selectedNode$ | async) === node" (click)="removeNode(node)" src="assets/icons/x.svg" alt="x">
                 
-                <img class="remove-icon placeholder-icon" *ngIf="(selectedNode$ | async) !== node" src="assets/icons/x.svg" alt="x">                
+                <img class="remove-icon placeholder-icon" *ngIf="!node.parent || (selectedNode$ | async) !== node" src="assets/icons/x.svg" alt="x">                
               </div>
             </div>
           </div>

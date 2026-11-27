@@ -1,5 +1,5 @@
 <div class="node-actions-container">
-    <div *ngIf="selectedNode.tagName != 'entity'" class="form-header-button" (click)="duplicateNode()" matTooltip="Duplicate node" [matTooltipShowDelay]="300">
+    <div *ngIf="selectedNode.tagName != 'entity'" class="form-header-button" (click)="addSiblingNode()" [matTooltip]="'Add another ' + selectedNode.nodeName.toLowerCase()" [matTooltipShowDelay]="300">
         <img class="form-header-copy-icon" src="assets/icons/copy.svg" alt="copy">
         <img class="form-header-copy-icon-hover" src="assets/icons/copy-hover.svg" alt="copy">
     </div>

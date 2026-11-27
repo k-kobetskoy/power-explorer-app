@@ -34,9 +34,7 @@
     </ng-container>
 
     <!-- Use the dedicated multi-value-form component -->
-    <app-multi-value-form *ngIf="showMultiValueInput$ | async" [selectedNode]="selectedNode"
-      [attributeValue]="attributeValue" [hideOperator]="true">
-    </app-multi-value-form>
+    <app-multi-value-form *ngIf="showMultiValueInput$ | async" [selectedNode]="selectedNode"></app-multi-value-form>
 
   </div>
 </div>

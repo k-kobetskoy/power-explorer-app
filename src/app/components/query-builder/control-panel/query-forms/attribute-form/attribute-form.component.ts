@@ -1,6 +1,6 @@
 import { Component, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, Input, ChangeDetectorRef } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { Observable, Subject, debounceTime, distinctUntilChanged, map, startWith, switchMap, takeUntil, combineLatest, of, catchError, filter, finalize, BehaviorSubject, tap, EMPTY } from 'rxjs';
+import { Observable, Subject, debounceTime, takeUntil, BehaviorSubject } from 'rxjs';
 import { AttributeModel } from 'src/app/models/incoming/attrubute/attribute-model';
 import { AttributeEntityService } from '../../../services/entity-services/attribute-entity.service';
 import { BaseFormComponent } from '../base-form.component';
@@ -18,6 +18,9 @@ import { FormsModule } from '@angular/forms';
 import { NodeTreeService } from '../../../services/node-tree.service';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { NodeActionsComponent } from '../node-actions/node-actions.component';
+import { bindControlToAttribute } from '../helpers/attribute-binding';
+import { parentEntityMetadata$ } from '../helpers/entity-metadata';
+import { suggestions$ } from '../helpers/suggestions';
 
 @Component({
   standalone: true,
@@ -79,112 +82,30 @@ export class AttributeFormComponent extends BaseFormComponent implements OnDestr
       [this.aliasInputName]: ['']
     });
 
-    // Form input -> model
-    this.setupFormToModelBindings();
-
+    // Before the bindings fill the inputs: the list starts unfiltered
     this.setupAttributeAutocomplete();
 
-    // Model -> Form input
-    this.setupModelToFormBindings(this.selectedNode);
+    this.setupBindings();
   }
 
-  private setupFormToModelBindings() {
-    this.attributeForm.get(this.nameInputName).valueChanges.pipe(
-      distinctUntilChanged(),
-      debounceTime(50),
-      takeUntil(this.destroy$),
-    ).subscribe(value => {
-      this.updateAttribute(this.nameAttributeData, this.selectedNode, value);
-    });
+  private setupBindings() {
+    [this.nameAttributeData, this.aliasAttributeData].forEach(attributeData => {
+      const control = this.attributeForm.get(attributeData.EditorName);
 
-    this.attributeForm.get(this.aliasInputName).valueChanges.pipe(
-      distinctUntilChanged(),
-      debounceTime(50),
-      takeUntil(this.destroy$),
-    ).subscribe(value => {
-      this.updateAttribute(this.aliasAttributeData, this.selectedNode, value);
-    });
-  }
-
-  private setupModelToFormBindings(selectedNode: QueryNode) {
-    const controlBindings = [
-      { editorName: this.nameInputName, control: this.nameInputName },
-      { editorName: this.aliasInputName, control: this.aliasInputName }
-    ];
-
-    controlBindings.forEach(({ editorName, control }) => {
-      selectedNode.attributes$.pipe(
-        map(attributes => attributes.find(a => a.editorName === editorName)),
-        distinctUntilChanged(),
-        switchMap(attr => attr ? attr.value$.pipe(distinctUntilChanged()) : EMPTY),
-        takeUntil(this.destroy$),
-      ).subscribe(value => {
-        const formValue = this.attributeForm.get(control).value;
-        if (formValue !== value) {
-          this.attributeForm.get(control).setValue(value, { emitEvent: false });
-        }
-      });
+      bindControlToAttribute(control, this.selectedNode, attributeData, this.destroy$, { debounce: 50 });
     });
   }
 
   private setupAttributeAutocomplete() {
-    const parentEntityNode = this.selectedNode.getParentEntity();
+    const attributes$ = parentEntityMetadata$<AttributeModel[]>(this.selectedNode.getParentEntity(), {
+      load: entityName => this.attributeService.getAttributes(entityName, true),
+      empty: [],
+      loading$: this.isLoadingAttributes$
+    });
 
-    if (!parentEntityNode) {
-      this.filteredAttributes$ = of([]);
-      return;
-    }
-
-    const parentEntityName$ = this.selectedNode.getParentEntityName(parentEntityNode)
-      .pipe(distinctUntilChanged());
-
-    const combinedParent$ = combineLatest([
-      parentEntityName$.pipe(distinctUntilChanged()),
-      parentEntityNode.validationResult$.pipe(distinctUntilChanged((prev, curr) => prev.isValid === curr.isValid))
-    ])
-
-    const validatedAttributes$ = combinedParent$.pipe(
-      switchMap(([entityName, validationResult]) => {
-        if (!validationResult.isValid) {
-          return of([]);
-        }
-
-        // Set loading state to true before making the request
-        this.isLoadingAttributes$.next(true);
-
-        return this.attributeService.getAttributes(entityName, true).pipe(
-          map(attributes => {
-            return attributes;
-          }),
-          catchError(error => {
-            console.error(`[AttributeFormComponent] Error fetching attributes for entity: ${entityName}`, error);
-            return of([]);
-          }),
-          tap(() => {
-            this.isLoadingAttributes$.next(false);
-          })
-        );
-      })
-    );
-
-    this.filteredAttributes$ = combineLatest([
-      this.attributeForm.get('name').valueChanges.pipe(
-        startWith(this.attributeForm.get('name').value || '')
-      ),
-      validatedAttributes$
-    ]).pipe(
+    this.filteredAttributes$ = suggestions$(this.attributeForm.get(this.nameInputName), attributes$).pipe(
       debounceTime(50),
-      map(([value, attributes]) => {
-        return this.filterAttributes(value, attributes);
-      })
-    );
-  }
-
-  private filterAttributes(value: string, attributes: AttributeModel[]): AttributeModel[] {
-    const filterValue = value?.toLowerCase() || '';
-    return attributes.filter(attr =>
-      attr.logicalName.toLowerCase().includes(filterValue) ||
-      attr.displayName.toLowerCase().includes(filterValue)
+      takeUntil(this.destroy$)
     );
   }
 

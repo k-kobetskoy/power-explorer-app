@@ -20,6 +20,7 @@ import { NodeTreeService } from '../../../services/node-tree.service';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { NodeActionsComponent } from '../node-actions/node-actions.component';
+import { suggestions$ } from '../helpers/suggestions';
 import { ACTIVE_ENVIRONMENT_MODEL, ACTIVE_ACCOUNT_MODEL } from 'src/app/models/tokens';
 import { EnvironmentModel } from 'src/app/models/environment-model';
 import { AccountInfo } from '@azure/msal-browser';
@@ -149,22 +150,11 @@ export class EntityFormComponent extends BaseFormComponent implements OnDestroy,
     }
 
     private setupEntityAutocomplete() {
-        this.filteredEntities$ = combineLatest([
-            this.entityForm.get(this.nameInputName).valueChanges.pipe(startWith(this.entityForm.get(this.nameInputName).value || '')),
-            this.entityService.getEntities(true)
-        ]).pipe(
-            debounceTime(50),
-            distinctUntilChanged((prev, curr) => prev.every((value, index) => value === curr[index])),
-            map(([value, entities]) => this.filterEntities(value, entities)),
-            takeUntil(this.destroy$)
-        );
-    }
+        const control = this.entityForm.get(this.nameInputName);
 
-    private filterEntities(value: string, entities: EntityModel[]): EntityModel[] {
-        const filterValue = (value || '').toLowerCase();
-        return entities.filter(entity =>
-            entity.logicalName.toLowerCase().includes(filterValue) ||
-            entity.displayName.toLowerCase().includes(filterValue)
+        this.filteredEntities$ = suggestions$(control, this.entityService.getEntities(true)).pipe(
+            debounceTime(50),
+            takeUntil(this.destroy$)
         );
     }
 

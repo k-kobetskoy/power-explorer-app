@@ -1,5 +1,5 @@
 // TreePanelComponent - Added to fix component declaration issue
-import { ChangeDetectionStrategy, Component, CUSTOM_ELEMENTS_SCHEMA, NO_ERRORS_SCHEMA, OnInit, ViewEncapsulation } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, ViewEncapsulation } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import { QueryNodeTree } from 'src/app/components/query-builder/models/query-node-tree';
@@ -22,7 +22,6 @@ import { MatTooltipModule } from '@angular/material/tooltip';
       MatIconModule,
       MatTooltipModule
   ],
-  schemas: [NO_ERRORS_SCHEMA, CUSTOM_ELEMENTS_SCHEMA],
 })
 export class TreePanelComponent implements OnInit {
 
