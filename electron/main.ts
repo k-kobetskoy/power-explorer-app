@@ -1,17 +1,18 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, Menu } from 'electron';
 import { autoUpdater, AppUpdater } from 'electron-updater';
 import * as path from 'path';
 import * as url from 'url';
 import * as fs from 'fs';
 import AuthHandler from './auth-handler';
+import { openExternalLink } from './external-links';
 
 
 // Get application info from package.json
 const APP_NAME = "Power Explorer";
 const APP_PROTOCOL = 'powerexplorer';
 
-// Disable Electron security warnings (doesn't affect security, just the console warnings)
-process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
+// The dev server URL is honoured only when running unpackaged
+const devServerUrl = app.isPackaged ? undefined : process.env.ELECTRON_START_URL;
 
 autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.autoDownload = true;
@@ -72,8 +73,8 @@ if (!gotTheLock) {
     // In development, use the dev server URL
     // In production, use an absolute file:// URL
     let indexPath;
-    if (process.env.ELECTRON_START_URL) {
-      mainWindow.loadURL(process.env.ELECTRON_START_URL);
+    if (devServerUrl) {
+      mainWindow.loadURL(devServerUrl);
     } else {
       // Get the absolute path to the Angular app build folder
       // Make sure we're using a normalized absolute path
@@ -198,27 +199,15 @@ if (!gotTheLock) {
     }
 
     // Open DevTools in development
-    if (process.env.ELECTRON_START_URL) {
-      mainWindow.webContents.openDevTools();
-    } else {
-      // Always open DevTools for debugging
+    if (!app.isPackaged) {
       mainWindow.webContents.openDevTools();
     }
 
     // Handle external links - open in default browser
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
       // Open URLs in the user's browser
-      shell.openExternal(url);
+      openExternalLink(url);
       return { action: 'deny' };
-    });
-
-    // Also handle regular anchor links with target="_blank"
-    mainWindow.webContents.on('will-navigate', (event, url) => {
-      // Only handle external URLs, not app navigation
-      if (!url.startsWith('file:')) {
-        event.preventDefault();
-        shell.openExternal(url);
-      }
     });
 
     // Initialize authentication handler
@@ -229,7 +218,7 @@ if (!gotTheLock) {
     });
 
     // Only register protocol in production mode
-    if (!process.env.ELECTRON_START_URL) {
+    if (!devServerUrl) {
       // Get the path to the Angular app build folder
       const distPath = path.join(appPath, 'dist', 'power-explorer');
       
@@ -330,7 +319,7 @@ if (!gotTheLock) {
     // Menu.setApplicationMenu(null);
     
     // Set up custom protocol before creating window
-    if (!process.env.ELECTRON_START_URL) {
+    if (!devServerUrl) {
       const appPath = path.resolve(__dirname, '..');
       const distPath = path.join(appPath, 'dist', 'power-explorer');
       
@@ -610,31 +599,7 @@ if (!gotTheLock) {
         mainWindow.webContents.send('update-downloaded', info);
       }
     });
-
-    // Verify handlers after a slight delay to ensure they're registered
-    setTimeout(verifyIpcHandlers, 1000);
   });
-
-  // Check if all required IPC handlers are registered
-  function verifyIpcHandlers(): void {
-    
-    // List expected handlers for auth
-    const expectedHandlers: string[] = ['login', 'getToken', 'logout', 'getActiveAccount'];
-    
-    // Check if handlers exist in Electron
-    const registeredHandlers = ipcMain.eventNames();
-    
-    
-    // Log missing handlers
-    const missingHandlers = expectedHandlers.filter(
-      handler => !registeredHandlers.includes(handler)
-    );
-    
-    if (missingHandlers.length > 0) {
-      console.error('[MAIN] Missing IPC handlers:', missingHandlers);
-    } else {
-    }
-  }
 
   app.on('window-all-closed', function () {
     if (process.platform !== 'darwin') {
@@ -654,10 +619,7 @@ if (!gotTheLock) {
 
   // Add IPC handler for opening external links
   ipcMain.handle('open-external', async (_, url: string) => {
-    if (url) {
-      return shell.openExternal(url);
-    }
-    return false;
+    return openExternalLink(url);
   });
 
   // Prevent default browser behavior
@@ -667,7 +629,7 @@ if (!gotTheLock) {
       const parsedUrl = new URL(navigationUrl);
       if (!parsedUrl.protocol.includes('file:')) {
         event.preventDefault();
-        shell.openExternal(navigationUrl);
+        openExternalLink(navigationUrl);
       }
     });
   });
