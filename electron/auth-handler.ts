@@ -1,12 +1,13 @@
-import { BrowserWindow, ipcMain } from 'electron';
-import { PublicClientApplication, InteractionRequiredAuthError, ServerError, LogLevel, AuthenticationResult, Configuration, AccountInfo, ICachePlugin } from '@azure/msal-node';
+import { BrowserWindow } from 'electron';
+import { PublicClientApplication, InteractionRequiredAuthError, ServerError, LogLevel, AuthenticationResult, Configuration, AccountInfo } from '@azure/msal-node';
 import Store from 'electron-store';
 import IpcChannels from './ipc-channels';
 import { openExternalLink } from './external-links';
 import { EnvironmentModel, AuthResponse, TokenResponse, EnvironmentsResponse, GenericResponse } from './types';
-import * as fs from 'fs';
 import * as http from 'http';
-import * as path from 'path';
+import { EncryptedCachePlugin } from './token-cache';
+import { handleTrusted } from './trusted-ipc';
+import { dataverseOrigin, toEnvironmentModel } from './dataverse-hosts';
 import { app } from 'electron';
 
 // Custom protocol for deep linking
@@ -15,46 +16,10 @@ const DEEP_LINK_URL = `${APP_PROTOCOL}://auth`;
 
 // MSAL error codes for a request that got no usable answer from Microsoft
 const NETWORK_ERROR_CODES = ['network_error', 'endpoints_resolution_error', 'openid_config_error'];
+const INVALID_ENVIRONMENT_ERROR = 'This is not a supported Dataverse environment address';
 // OAuth codes by which Microsoft declines this account or application. A list of what counts, not of
 // what does not: after an outage or throttling MSAL replays the failure with an empty or numeric code
 const REFUSAL_ERROR_CODES = ['invalid_resource', 'invalid_client', 'unauthorized_client', 'invalid_scope', 'invalid_request', 'access_denied'];
-
-// Persistent cache plugin for MSAL
-class PersistentCachePlugin implements ICachePlugin {
-    private cachePath: string;
-
-    constructor() {
-        // Use user data path for persistent storage
-        this.cachePath = path.join(app.getPath('userData'), 'msal-cache.json');
-        console.log('[AUTH-HANDLER] MSAL cache path:', this.cachePath);
-    }
-
-    async beforeCacheAccess(cacheContext: any): Promise<void> {
-        try {
-            if (fs.existsSync(this.cachePath)) {
-                const cacheData = await fs.promises.readFile(this.cachePath, 'utf-8');
-                cacheContext.tokenCache.deserialize(cacheData);
-                console.log('[AUTH-HANDLER] Loaded MSAL cache from disk');
-            } else {
-                console.log('[AUTH-HANDLER] No MSAL cache file exists yet');
-            }
-        } catch (error) {
-            console.error('[AUTH-HANDLER] Error loading MSAL cache:', (error as Error)?.name);
-        }
-    }
-
-    async afterCacheAccess(cacheContext: any): Promise<void> {
-        if (cacheContext.cacheHasChanged) {
-            try {
-                const cacheData = cacheContext.tokenCache.serialize();
-                await fs.promises.writeFile(this.cachePath, cacheData);
-                console.log('[AUTH-HANDLER] Wrote MSAL cache to disk');
-            } catch (error) {
-                console.error('[AUTH-HANDLER] Error writing MSAL cache:', error);
-            }
-        }
-    }
-}
 
 interface InteractiveRequest {
     scopes: string[];
@@ -104,8 +69,7 @@ class AuthHandler {
 
     initializeMsal() {
         try {
-            // Create persistent cache plugin
-            const persistentCachePlugin = new PersistentCachePlugin();
+            const cachePlugin = new EncryptedCachePlugin();
             
             const msalConfig: Configuration = {
                 auth: {
@@ -123,7 +87,7 @@ class AuthHandler {
                     },
                 },
                 cache: {
-                    cachePlugin: persistentCachePlugin
+                    cachePlugin
                 }
             };
 
@@ -135,8 +99,13 @@ class AuthHandler {
 
     registerIpcHandlers() {
         // Handle authentication requests from the renderer process
-        ipcMain.handle(IpcChannels.AUTH_LOGIN, async (event, environmentModel: EnvironmentModel): Promise<AuthResponse> => {
+        handleTrusted(IpcChannels.AUTH_LOGIN, async (event, requested: unknown): Promise<AuthResponse> => {
             try {
+                const environmentModel = toEnvironmentModel(requested);
+                if (!environmentModel) {
+                    return { success: false, error: INVALID_ENVIRONMENT_ERROR };
+                }
+
                 const result = await this.login(environmentModel);
 
                 // Save the environment model with auth config
@@ -145,7 +114,7 @@ class AuthHandler {
                 // Make sure to save the account immediately
                 this.storeActiveAccount(result.account);
 
-                return { success: true, account: result.account, accessToken: result.accessToken };
+                return { success: true, account: result.account };
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : 'Unknown error during login';
                 return { success: false, error: errorMessage };
@@ -153,7 +122,7 @@ class AuthHandler {
         });
 
         // Handle token acquisition. Silent only: signing in is always the user's decision
-        ipcMain.handle(IpcChannels.AUTH_GET_TOKEN, async (event, environmentModel: EnvironmentModel): Promise<TokenResponse> => {
+        handleTrusted(IpcChannels.AUTH_GET_TOKEN, async (event, environmentModel: EnvironmentModel): Promise<TokenResponse> => {
             try {
                 return await this.getToken(environmentModel);
             } catch (error) {
@@ -163,7 +132,7 @@ class AuthHandler {
         });
 
         // Handle log out requests
-        ipcMain.handle(IpcChannels.AUTH_LOGOUT, async (): Promise<GenericResponse> => {
+        handleTrusted(IpcChannels.AUTH_LOGOUT, async (): Promise<GenericResponse> => {
             try {
                 await this.logout();
                 return { success: true };
@@ -174,7 +143,7 @@ class AuthHandler {
         });
 
         // Handle get active account request
-        ipcMain.handle(IpcChannels.AUTH_GET_ACTIVE_ACCOUNT, async (): Promise<AccountInfo | null> => {
+        handleTrusted(IpcChannels.AUTH_GET_ACTIVE_ACCOUNT, async (): Promise<AccountInfo | null> => {
             console.log('[AUTH-HANDLER] Direct getActiveAccount handler called');
             try {
                 const account = await this.getActiveAccount();
@@ -186,19 +155,8 @@ class AuthHandler {
             }
         });
 
-        // Handle set active account request
-        ipcMain.handle(IpcChannels.AUTH_SET_ACTIVE_ACCOUNT, async (event, account: AccountInfo): Promise<GenericResponse> => {
-            try {
-                this.storeActiveAccount(account);
-                return { success: true };
-            } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : 'Unknown error setting active account';
-                return { success: false, error: errorMessage };
-            }
-        });
-
         // Handle get cached environments request
-        ipcMain.handle(IpcChannels.ENV_GET_MODELS, async (): Promise<EnvironmentsResponse> => {
+        handleTrusted(IpcChannels.ENV_GET_MODELS, async (): Promise<EnvironmentsResponse> => {
             try {
                 const environments = this.getEnvironmentModels();
                 return { success: true, environments };
@@ -209,7 +167,7 @@ class AuthHandler {
         });
 
         // Handle delete cached environment request
-        ipcMain.handle(IpcChannels.ENV_DELETE_MODEL, async (event, environmentModel: EnvironmentModel): Promise<GenericResponse> => {
+        handleTrusted(IpcChannels.ENV_DELETE_MODEL, async (event, environmentModel: EnvironmentModel): Promise<GenericResponse> => {
             try {
                 this.deleteEnvironmentModel(environmentModel);
                 return { success: true };
@@ -219,10 +177,11 @@ class AuthHandler {
             }
         });
 
-        ipcMain.handle(IpcChannels.ENV_SET_ACTIVE, async (event, environmentModel: EnvironmentModel): Promise<GenericResponse> => {
+        handleTrusted(IpcChannels.ENV_SET_ACTIVE, async (event, requested: unknown): Promise<GenericResponse> => {
             try {
+                const environmentModel = toEnvironmentModel(requested);
                 if (!environmentModel) {
-                    return { success: false, error: 'No environment model provided' };
+                    return { success: false, error: INVALID_ENVIRONMENT_ERROR };
                 }
 
                 const result = await this.setActiveEnvironment(environmentModel);
@@ -233,7 +192,7 @@ class AuthHandler {
             }
         });
 
-        ipcMain.handle(IpcChannels.ENV_GET_ACTIVE, async (): Promise<EnvironmentsResponse> => {
+        handleTrusted(IpcChannels.ENV_GET_ACTIVE, async (): Promise<EnvironmentsResponse> => {
             try {
                 const activeEnv = this.getActiveEnvironment();
                 return { success: true, environment: activeEnv };
@@ -244,7 +203,7 @@ class AuthHandler {
         });
 
         // Add new handler for auth redirect from renderer
-        ipcMain.handle(IpcChannels.AUTH_HANDLE_REDIRECT, async (event, params: Record<string, string>): Promise<GenericResponse> => {
+        handleTrusted(IpcChannels.AUTH_HANDLE_REDIRECT, async (event, params: Record<string, string>): Promise<GenericResponse> => {
             try {
                 await this.handleAuthRedirect(params);
                 return { success: true };
@@ -539,9 +498,30 @@ class AuthHandler {
         }
     }
 
+    // Tokens are handed out for saved environments only, and the scope comes from the saved model:
+    // what the window sends just picks one of them
+    async getToken(requested: EnvironmentModel): Promise<TokenResponse> {
+        const environmentModel = this.findStoredEnvironment(requested);
+        if (!environmentModel) {
+            return { success: false, error: 'This environment is not saved. Connect to it again.' };
+        }
+        return this.acquireTokenSilently(environmentModel);
+    }
+
+    // The active environment counts too: it may be missing from the capped list of recent ones.
+    // Stored models are checked and normalized again, earlier versions saved them as typed
+    private findStoredEnvironment(requested: EnvironmentModel): EnvironmentModel | null {
+        const origin = dataverseOrigin(requested?.apiUrl);
+        if (!origin) return null;
+
+        const stored = [...this.getEnvironmentModels(), this.getActiveEnvironment()]
+            .find(model => dataverseOrigin(model?.apiUrl) === origin);
+        return stored ? { ...stored, apiUrl: origin } : null;
+    }
+
     // Never opens the browser. `refused` marks an answer where Microsoft declined this account,
     // which a sign-in may fix; network failures and outages are plain errors
-    async getToken(environmentModel: EnvironmentModel): Promise<TokenResponse> {
+    private async acquireTokenSilently(environmentModel: EnvironmentModel): Promise<TokenResponse> {
         const activeAccount = await this.getActiveAccount();
         if (!activeAccount) {
             return { success: false, loginRequired: true };
@@ -592,7 +572,8 @@ class AuthHandler {
         try {
             const models = this.getEnvironmentModels();
 
-            const existingIndex = models.findIndex(env => env.url === environmentModel.url);
+            // An earlier version may have saved the same address in another spelling
+            const existingIndex = models.findIndex(env => dataverseOrigin(env.url) === environmentModel.url);
 
             if (existingIndex >= 0) {
                 models.splice(existingIndex, 1);
@@ -726,7 +707,8 @@ class AuthHandler {
         if (!environmentModel) return false;
 
         try {            
-            const token = await this.getToken(environmentModel);
+            // Not necessarily saved yet; the IPC handler has validated it
+            const token = await this.acquireTokenSilently(environmentModel);
 
             if (token.loginRequired || token.refused) {
                 // Connecting is the user's own action, so signing in here is expected.

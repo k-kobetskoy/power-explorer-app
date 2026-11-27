@@ -8,7 +8,6 @@ const AUTH_GET_TOKEN = 'getToken';
 const AUTH_LOGOUT = 'logout';
 // const AUTH_SET_ENVIRONMENT_URL = 'setEnvironmentUrl'; // Removing non-implemented method
 const AUTH_GET_ACTIVE_ACCOUNT = 'getActiveAccount';
-const AUTH_SET_ACTIVE_ACCOUNT = 'setActiveAccount';
 const AUTH_HANDLE_REDIRECT = 'handleRedirect';
 // Environment model channels
 const ENV_GET_MODELS = 'getEnvironmentModels';
@@ -21,29 +20,11 @@ const UPDATE_CHECK = 'check-for-updates';
 const UPDATE_DOWNLOAD = 'download-update';
 const UPDATE_QUIT_INSTALL = 'quit-and-install';
 
-// Create a type for all channel names
-export type IpcChannel = 
-  | typeof AUTH_LOGIN
-  | typeof AUTH_GET_TOKEN
-  | typeof AUTH_LOGOUT
-  // | typeof AUTH_SET_ENVIRONMENT_URL // Removing non-implemented method
-  | typeof AUTH_GET_ACTIVE_ACCOUNT
-  | typeof AUTH_SET_ACTIVE_ACCOUNT
-  | typeof ENV_GET_MODELS
-  | typeof ENV_DELETE_MODEL
-  | typeof ENV_SET_ACTIVE
-  | typeof ENV_GET_ACTIVE
-  | typeof AUTH_HANDLE_REDIRECT
-  | typeof UPDATE_CHECK
-  | typeof UPDATE_DOWNLOAD
-  | typeof UPDATE_QUIT_INSTALL;
-
 // All channels in a single object
 const IpcChannels = {
   AUTH_LOGIN,
   AUTH_GET_TOKEN,
   AUTH_GET_ACTIVE_ACCOUNT,
-  AUTH_SET_ACTIVE_ACCOUNT,
   AUTH_LOGOUT,
   // AUTH_SET_ENVIRONMENT_URL, // Removing non-implemented method
   AUTH_HANDLE_REDIRECT,
@@ -88,29 +69,6 @@ interface ElectronAPI {
     openExternal: (url: string) => Promise<boolean>;
     isElectron: boolean;
 }
-
-interface ElectronInvokeAPI {
-    invoke: (channel: IpcChannel, ...args: any[]) => Promise<any>;
-}
-
-// Expose IPC channel constants to renderer
-contextBridge.exposeInMainWorld('IPC_CHANNELS', {
-    ...IpcChannels
-});
-
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
-contextBridge.exposeInMainWorld('electronAPI', {
-    invoke: (channel: IpcChannel, ...args: any[]) => {
-        // Validate the channel is one we've defined
-        const validChannels = Object.values(IpcChannels);
-        if (validChannels.includes(channel)) {
-            return ipcRenderer.invoke(channel, ...args);
-        }
-
-        throw new Error(`Unauthorized IPC channel: ${channel}`);
-    }
-});
 
 // Create the main electron API object
 const electronAPI: ElectronAPI = {

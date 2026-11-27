@@ -21,7 +21,7 @@ function environmentUrlValidator(control: AbstractControl<string>): ValidationEr
   // An empty field is reported by the required validator
   return !control.value || parseEnvironmentUrl(control.value)
     ? null
-    : { urlFormat: 'Enter an address such as org.crm.dynamics.com' };
+    : { urlFormat: 'Enter a Dataverse address such as org.crm.dynamics.com' };
 }
 
 @Component({

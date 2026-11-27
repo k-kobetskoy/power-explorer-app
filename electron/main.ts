@@ -1,10 +1,11 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol, Menu } from 'electron';
+import { app, BrowserWindow, dialog, protocol, Menu } from 'electron';
 import { autoUpdater, AppUpdater } from 'electron-updater';
 import * as path from 'path';
 import * as url from 'url';
 import * as fs from 'fs';
 import AuthHandler from './auth-handler';
 import { openExternalLink } from './external-links';
+import { handleTrusted, onTrusted, trustAppPage } from './trusted-ipc';
 
 
 // Get application info from package.json
@@ -22,6 +23,9 @@ app.name = APP_NAME;
 
 let mainWindow: BrowserWindow | null = null;
 let authHandler: AuthHandler | null = null;
+let updateDownloaded = false;
+
+trustAppPage(path.resolve(__dirname, '..'), devServerUrl);
 
 // Request single instance lock for Windows/Linux
 const gotTheLock = app.requestSingleInstanceLock();
@@ -62,7 +66,7 @@ if (!gotTheLock) {
         nodeIntegration: false,
         contextIsolation: true,
         preload: preloadPath,
-        sandbox: false, // Disable sandbox for better compatibility
+        sandbox: true,
         webSecurity: false // Disable web security in development for easier API access
       }
     });
@@ -599,6 +603,7 @@ if (!gotTheLock) {
     });
 
     autoUpdater.on('update-downloaded', (info) => {
+      updateDownloaded = true;
       if (mainWindow) {
         mainWindow.webContents.send('update-downloaded', info);
       }
@@ -618,11 +623,11 @@ if (!gotTheLock) {
   });
 
   // Handle IPC messages from renderer process
-  ipcMain.on('app-ready', (event) => {
+  onTrusted('app-ready', (event) => {
   });
 
   // Add IPC handler for opening external links
-  ipcMain.handle('open-external', async (_, url: string) => {
+  handleTrusted('open-external', async (_, url: string) => {
     return openExternalLink(url);
   });
 
@@ -639,7 +644,7 @@ if (!gotTheLock) {
   });
 
   // Add IPC handlers for autoupdater
-  ipcMain.handle('check-for-updates', async () => {
+  handleTrusted('check-for-updates', async () => {
     try {
       return await autoUpdater.checkForUpdates();
     } catch (error) {
@@ -648,7 +653,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('download-update', async () => {
+  handleTrusted('download-update', async () => {
     try {
       return await autoUpdater.downloadUpdate();
     } catch (error) {
@@ -657,7 +662,11 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('quit-and-install', () => {
+  handleTrusted('quit-and-install', () => {
+    if (!updateDownloaded) {
+      console.warn('[MAIN] No downloaded update to install');
+      return;
+    }
     autoUpdater.quitAndInstall(true, true);
   });
 

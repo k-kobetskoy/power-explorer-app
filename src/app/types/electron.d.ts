@@ -53,7 +53,3 @@ export interface ElectronAPI {
   openExternal: (url: string) => Promise<boolean>;
   isElectron: boolean;
 }
-
-export interface ElectronInvokeAPI {
-  invoke: (channel: string, ...args: any[]) => Promise<any>;
-} 
