@@ -16,7 +16,10 @@ export interface PlannedEntity {
   readonly alias: string | null;
   /** In the order of the query */
   readonly attributes: readonly PlannedAttribute[];
-  /** The node names no attributes, so whatever Dataverse returns for it is shown */
+  /**
+   * The node names no attributes, so whatever Dataverse returns for it is shown. Never in an aggregate
+   * query, where such a node returns no columns.
+   */
   readonly allAttributes: boolean;
 }
 
@@ -70,7 +73,7 @@ export function buildColumnPlan(root: QueryNode): ColumnPlan {
         entityName: valueOf(node, AttributeNames.entityName),
         alias: valueOf(node, AttributeNames.entityAlias),
         attributes,
-        allAttributes: attributes.length === 0
+        allAttributes: !aggregate && attributes.length === 0
       };
     });
 

@@ -35,7 +35,7 @@ const LOOKUP_KEY = /^_(.+)_value$/;
 /** The entities whose attribute metadata shapeResult uses. */
 export function entitiesNeedingMetadata(plan: ColumnPlan): string[] {
   const names = plan.entities
-    .filter((entity, index) => index === 0 || !entity.allAttributes)
+    .filter((entity, index) => index === 0 || entity.attributes.length > 0)
     .map(entity => entity.entityName);
 
   return [...new Set(names)];
@@ -100,6 +100,8 @@ function mapColumns(dataKeys: string[], plan: ColumnPlan, metadata: EntityMetada
   const named = plan.entities.map((entity, index) => entity.attributes.map(attribute =>
     namedColumn(entity, attribute, index, prefixes[index], labels[index], metadata, claim)));
 
+  const namedKeys = new Set(named.flat().map(([key]) => key));
+
   const columns = new Map<string, Column>();
   const add = (key: string, column: Column) => {
     if (!columns.has(key)) {
@@ -112,7 +114,7 @@ function mapColumns(dataKeys: string[], plan: ColumnPlan, metadata: EntityMetada
 
     if (entity.allAttributes) {
       const block = index === 0
-        ? primaryBlock(entity, metadata, unclaimed, claim)
+        ? primaryBlock(entity, metadata, namedKeys, unclaimed, claim)
         : linkBlock(entity, prefixes[index], labels[index], unclaimed, claim);
       block.forEach(([key, column]) => add(key, column));
     }
@@ -183,10 +185,15 @@ function namedColumn(
   }];
 }
 
-/** The attributes known from the metadata and any other property without a link prefix, the primary key first. */
+/**
+ * The attributes known from the metadata and any other property without a link prefix, the primary key first.
+ * A link attribute may be aliased like a primary attribute: the key is then left to that column, and the
+ * primary one is shown under the name of its property, or not at all when no row has it.
+ */
 function primaryBlock(
   entity: PlannedEntity,
   metadata: EntityMetadata,
+  namedKeys: Set<string>,
   unclaimed: Set<string>,
   claim: (...candidates: string[]) => string | null
 ): [string, Column][] {
@@ -207,15 +214,17 @@ function primaryBlock(
   const names = [...dataKeys.keys()].sort((a, b) =>
     Number(b === primaryId) - Number(a === primaryId) || a.localeCompare(b));
 
-  return names.map(name => {
+  return names.flatMap((name): [string, Column][] => {
     const model = models.get(name);
+    const dataKey = dataKeys.get(name);
+    const key = namedKeys.has(name) ? dataKey : name;
 
-    return [name, {
-      dataKey: dataKeys.get(name),
+    return key ? [[key, {
+      dataKey,
       entityName: entity.entityName,
       attributeLogicalName: name,
-      header: { logicalName: name, displayName: model?.displayName || name, type: model?.attributeType }
-    }];
+      header: { logicalName: key, displayName: model?.displayName || name, type: model?.attributeType }
+    }]] : [];
   });
 }
 
@@ -281,24 +290,35 @@ function resolveLinkPrefixes(dataKeys: string[], plan: ColumnPlan): (string | nu
       continue;
     }
 
-    // Some link returned nothing (no match in any row, or no columns at all). A link goes to a prefix
-    // holding one of its attributes; links naming attributes choose before the all-attributes ones.
+    // Some link returned nothing (no match in any row, or no columns at all). A prefix goes to the link
+    // that explains most of its properties; what is left goes to the all-attributes links.
     const free = new Set(generated);
-    const bySelectivity = [...links].sort((a, b) => Number(a.entity.allAttributes) - Number(b.entity.allAttributes));
-
-    for (const { entity, index } of bySelectivity) {
-      const match = [...free].find(prefix => entity.allAttributes || properties.get(prefix).some(property =>
-        entity.attributes.some(({ name, alias }) =>
-          alias ? property === alias : property === name || property === `_${name}_value`)));
-
-      if (match) {
-        prefixes[index] = match;
-        free.delete(match);
+    const take = (index: number, prefix: string) => {
+      if (prefixes[index] === null && free.delete(prefix)) {
+        prefixes[index] = prefix;
       }
-    }
+    };
+
+    // the sort is stable: equal matches stay in document order of the links, then ascending number
+    links
+      .flatMap(({ entity, index }) => generated.map(prefix =>
+        ({ index, prefix, explained: countExplained(entity, properties.get(prefix)) })))
+      .filter(match => match.explained > 0)
+      .sort((a, b) => b.explained - a.explained)
+      .forEach(({ index, prefix }) => take(index, prefix));
+
+    links
+      .filter(({ entity }) => entity.allAttributes)
+      .forEach(({ index }) => take(index, [...free][0]));
   }
 
   return prefixes;
+}
+
+/** How many of the properties found under a prefix belong to attributes the link names. */
+function countExplained(entity: PlannedEntity, properties: string[]): number {
+  return properties.filter(property => entity.attributes.some(({ name, alias }) =>
+    alias ? property === alias : property === name || property === `_${name}_value`)).length;
 }
 
 function toCell(row: any, column: Column, environmentBrowserUrl: string): CellData {

@@ -190,6 +190,15 @@ describe('result columns', () => {
     expect(values(result)).toEqual(['Name']);
   }));
 
+  it('gives the prefix to the link that explains more of its properties', fakeAsync(() => {
+    const result = shapeLinks(
+      link('contact', ['fullname']) + link('contact', ['fullname', 'jobtitle']),
+      [{ 'contact2.fullname': 'Name', 'contact2.jobtitle': 'Title' }]);
+
+    expect(keys(result)).toEqual(['contact#1.fullname', 'contact2.fullname', 'contact2.jobtitle']);
+    expect(values(result)).toEqual(['', 'Name', 'Title']);
+  }));
+
   for (const key of ['who', 'pc.who']) {
     it(`maps an aliased attribute of a link returned as ${key}`, fakeAsync(() => {
       const result = shapeLinks(
@@ -236,6 +245,37 @@ describe('result columns', () => {
       [{ a_who: 'Name', accountid: 'a-1', name: 'A' }]);
 
     expect(keys(result)).toEqual(['accountid', 'industrycode', 'name', 'ownerid', 'a_who']);
+  }));
+
+  const aliasedLikePrimary = (name: string) =>
+    query(`<link-entity name="contact" from="a" to="b" alias="pc"><attribute name="${name}" alias="${name}" /></link-entity>`);
+
+  it('does not let an empty primary column hide a link attribute aliased like a primary one', fakeAsync(() => {
+    const result = shape(aliasedLikePrimary('name'), [{ accountid: 'a-1', name: 'linked' }]);
+
+    expect(keys(result)).toEqual(['accountid', 'industrycode', 'ownerid', 'name']);
+    expect(labels(result)).toEqual(['accountid', 'Industry', 'Owner', 'name']);
+    expect(values(result)).toEqual(['a-1', '', '', 'linked']);
+  }));
+
+  it('keeps both a primary lookup and a link attribute aliased like it', fakeAsync(() => {
+    const result = shape(aliasedLikePrimary('ownerid'), [{ _ownerid_value: 'primary', ownerid: 'linked' }]);
+
+    expect(keys(result)).toEqual(['industrycode', 'name', '_ownerid_value', 'ownerid']);
+    expect(labels(result)).toEqual(['Industry', 'Account Name', 'Owner', 'ownerid']);
+    expect(values(result)).toEqual(['', '', 'primary', 'linked']);
+  }));
+
+  it('adds no columns for the nodes of an aggregate query that name no attributes', fakeAsync(() => {
+    const result = shape(
+      '<fetch aggregate="true"><entity name="account">' +
+      '<link-entity name="contact" from="a" to="b" alias="c"><attribute name="contactid" alias="cnt" aggregate="count" /></link-entity>' +
+      '<link-entity name="systemuser" from="a" to="b" />' +
+      '</entity></fetch>',
+      [{ cnt: 5 }]);
+
+    expect(keys(result)).toEqual(['cnt']);
+    expect(values(result)).toEqual([5]);
   }));
 
   it('maps a primary lookup that has no metadata', fakeAsync(() => {
