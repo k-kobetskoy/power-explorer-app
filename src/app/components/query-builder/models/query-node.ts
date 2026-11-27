@@ -39,6 +39,12 @@ export class QueryNode {
 
     destroyed$ = new Subject<void>();
 
+    /**
+     * Set by NodeTreeService on the root node of the active tree. Called whenever an attribute
+     * of any node in that tree is added, removed or changes its value. Null on detached trees.
+     */
+    onTreeChanged: (() => void) | null = null;
+
     constructor(
         nodeData: INodeData,
         attributeFactory: IAttributeFactory,
@@ -106,26 +112,34 @@ export class QueryNode {
 
     setAttribute(attributeData: IAttributeData, value: string, atributeModel: AttributeModel = null): void {
         try {
-            let attribute = this.findOrCreateAttribute(attributeData);
+            const attribute = this.findAttribute(attributeData.EditorName);
+
+            if (!attribute) {
+                this.createAttributeWithValue(attributeData.EditorName, value, atributeModel);
+                return;
+            }
 
             if (attribute.value$.value !== value) {
                 attribute.value$.next(value);
                 if (atributeModel) {
                     attribute.setAttributeModel(atributeModel);
                 }
+                this.notifyTreeChanged();
             }
         } catch (error) {
             console.error(`[QueryNode] Error in setAttribute: ${error}`);
         }
     }
 
-    private findOrCreateAttribute(attributeData: IAttributeData): NodeAttribute {
-        let attribute = this.findAttribute(attributeData.EditorName);
-        if (!attribute) {
-            attribute = this.attributeFactory.createAttribute(attributeData.EditorName, this, false);
-            this.addAttribute(attribute);
+    // The value is set before the attribute is published: forms copy it into their inputs as soon as
+    // attributes$ emits, so an empty value there would wipe what the user has just entered
+    private createAttributeWithValue(attributeName: string, value: string, attributeModel: AttributeModel): void {
+        const attribute = this.attributeFactory.createAttribute(attributeName, this, false);
+        attribute.value$.next(value);
+        if (attributeModel) {
+            attribute.setAttributeModel(attributeModel);
         }
-        return attribute;
+        this.addAttribute(attribute);
     }
 
     findAttribute(attributeName: string): NodeAttribute | undefined {
@@ -140,8 +154,8 @@ export class QueryNode {
         if (index !== -1) {
             const attributeToRemove = attributes[index];
             attributeToRemove.dispose(); // Clean up subscriptions
-            attributes.splice(index, 1);
-            this.attributes$.next(attributes);
+            this.attributes$.next(attributes.filter((_, i) => i !== index));
+            this.notifyTreeChanged();
         }
     }
 
@@ -150,31 +164,16 @@ export class QueryNode {
     }
 
     addAttribute(attribute: NodeAttribute): void {
-        let attributes = this.attributes$.value;
-
-        const isUndefinedAttribute = attribute.order > this.attributesCount;
-
-        if (isUndefinedAttribute) {
-            this.addToLastFreePosition(attribute, attributes);
-        }
-        else {
-            attributes.splice(attribute.order - 1, 0, attribute);
-        }
-
-        attributes.sort((a, b) => a.order - b.order);
+        // Always a new array: subscribers compare emissions, so the emitted one must never be mutated.
+        // The sort is stable, so attributes of the same order (unknown ones) keep their insertion order
+        const attributes = [...this.attributes$.value, attribute].sort((a, b) => a.order - b.order);
 
         this.attributes$.next(attributes);
+        this.notifyTreeChanged();
     }
 
-    private addToLastFreePosition(attribute: NodeAttribute, attributes: NodeAttribute[]): void {
-        let indexToInsert = this.attributesCount - 1;
-
-        while (attributes[indexToInsert] !== undefined) {
-            indexToInsert++;
-        }
-
-        this.attributesCount = indexToInsert + 1;
-        attributes[indexToInsert] = attribute;
+    private notifyTreeChanged(): void {
+        (this.rootNode ?? this).onTreeChanged?.();
     }
 
     public dispose(): void {

@@ -1,16 +1,17 @@
 import { Inject, Injectable } from '@angular/core';
-import { Observable, of, switchMap, catchError, tap, BehaviorSubject, throwError, shareReplay, map } from 'rxjs';
+import { Observable, Subject, of, defer, switchMap, catchError, BehaviorSubject, map, startWith, take, throwIfEmpty } from 'rxjs';
 import { BaseRequestService } from './entity-services/abstract/base-request.service';
 import { API_ENDPOINTS } from 'src/app/config/api-endpoints';
-import { HttpHeaders, HttpErrorResponse } from '@angular/common/http';
+import { HttpHeaders } from '@angular/common/http';
 import { NodeTreeService } from './node-tree.service';
-import { AttributeEntityService, EntityAttributeMap } from './entity-services/attribute-entity.service';
+import { AttributeEntityService } from './entity-services/attribute-entity.service';
 import { QueryNode } from '../models/query-node';
 import { ErrorDialogService } from 'src/app/services/error-dialog.service';
 import { AllAttributesStrategy, RowData } from './result-table/all-attributes-strategy';
 import { DefinedAttributesStrategy } from './result-table/defined-attributes-strategy';
 import { ACTIVE_ENVIRONMENT_MODEL } from 'src/app/models/tokens';
 import { EnvironmentModel } from 'src/app/models/environment-model';
+import { RequestNotSentError } from 'src/app/models/request-not-sent-error';
 
 interface FetchXmlQueryOptions {
   maxPageSize?: number;
@@ -55,6 +56,20 @@ export interface XmlExecutionResult {
   __original_data?: any[]; // Original data from the API response for reference
 }
 
+/** The single state of the latest query execution; the result table renders from it. */
+export type ExecutionState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'rows'; result: MatTableRawData }
+  | { status: 'empty' }
+  | { status: 'requestError'; message: string; code?: string }
+  | { status: 'processingError'; message: string };
+
+interface ExecutionRequest {
+  xml: string;
+  entityNode: QueryNode;
+}
+
 // Define an interface for the Dataverse response
 interface DataverseExecuteXmlResponse {
   statusCode?: number;
@@ -74,21 +89,11 @@ interface DataverseExecuteXmlResponse {
 
 @Injectable({ providedIn: 'root' })
 export class XmlExecutorService extends BaseRequestService {
-  private isExecuting: boolean = false; // Track execution state
-  private lastError: string | null = null; // Store last error message
-
-  // Add default result constant
-  private readonly DEFAULT_RESULT: MatTableRawData = Object.freeze({
-    header: {},
-    rows: [],
-    __original_data: []
-  });
-
   private rawDataverseResultSubject = new BehaviorSubject<DataverseExecuteXmlResponse>(null);
 
-  // Add BehaviorSubject to track loading state
-  private isLoadingState = new BehaviorSubject<boolean>(false);
-  public isLoadingState$ = this.isLoadingState.asObservable();
+  private readonly executionRequests$ = new Subject<ExecutionRequest>();
+  private readonly executionState = new BehaviorSubject<ExecutionState>({ status: 'idle' });
+  public readonly state$: Observable<ExecutionState> = this.executionState.asObservable();
 
   constructor(
     private attributeEntityService: AttributeEntityService,
@@ -97,69 +102,85 @@ export class XmlExecutorService extends BaseRequestService {
     @Inject(ACTIVE_ENVIRONMENT_MODEL) private _activeEnvironmentModel: BehaviorSubject<EnvironmentModel>
   ) {
     super();
-    if (this._activeEnvironmentModel) {
-      // Subscribe to changes in the environment Model
-    } else {
-      console.error('_activeEnvironmentModel is undefined in constructor');
-    }
-  }
-
-  isLoading(): boolean {
-    return this.isExecuting;
-  }
-
-  getLastError(): string | null {
-    return this.lastError;
-  }
-
-  clearError(): void {
-    this.lastError = null;
+    // switchMap: a new execution cancels whatever the previous one still has in flight
+    this.executionRequests$
+      .pipe(switchMap(request => this.runExecution(request)))
+      .subscribe(state => this.executionState.next(state));
   }
 
   getRawDataverseRawResult(): BehaviorSubject<DataverseExecuteXmlResponse> {
     return this.rawDataverseResultSubject;
   }
 
-  executeXmlRequest(xml: string, entityNode: QueryNode, options: FetchXmlQueryOptions = {}): Observable<MatTableRawData> {
-    this.isExecuting = true;
-    this.isLoadingState.next(true);
-    this.lastError = null;
+  /** Starts a query execution. The outcome is published on state$. */
+  execute(xml: string, entityNode: QueryNode): void {
+    this.executionRequests$.next({ xml, entityNode });
+  }
 
-    if (!xml || !entityNode) {
-      this.isExecuting = false;
-      this.isLoadingState.next(false);
-      return throwError(() => new Error('XML and entity information are required. Please ensure you have a valid query with entity information before executing'));
+  /** Emits 'loading' and then one final state. Never errors, so the pipeline stays alive. */
+  private runExecution({ xml, entityNode }: ExecutionRequest): Observable<ExecutionState> {
+    return defer(() => {
+      // Read once: a later environment change must not re-send this query
+      const environmentUrl = this._activeEnvironmentModel.value?.url;
+
+      return this.executeRequest(xml, entityNode, environmentUrl).pipe(
+        switchMap(response => {
+          this.rawDataverseResultSubject.next({ ...response });
+          return this.toResultState(response?.value || [], environmentUrl);
+        })
+      );
+    }).pipe(
+      catchError(error => of(this.reportRequestError(error))),
+      startWith<ExecutionState>({ status: 'loading' })
+    );
+  }
+
+  private toResultState(data: any[], environmentUrl: string): Observable<ExecutionState> {
+    if (!data.length) {
+      return of<ExecutionState>({ status: 'empty' });
     }
 
-    if (!entityNode.entitySetName$ || !entityNode.entitySetName$.value) {
-      this.isExecuting = false;
-      this.isLoadingState.next(false);
-      return throwError(() => new Error('Entity name is missing or invalid. Please select a valid entity for your query'));
-    }
-
-    const xmlOptions = this.extractQueryOptions();
-    const mergedOptions = { ...xmlOptions, ...options };
-
-    return this.executeRequest(xml, entityNode, mergedOptions).pipe(
-      tap(() => {
-        this.isExecuting = false;
-        this.isLoadingState.next(false);
+    return defer(() => this.processDataWithStrategy(data, environmentUrl)).pipe(
+      // The metadata stream behind a strategy stays open and follows environment changes
+      take(1),
+      throwIfEmpty(() => new Error('The result strategy completed without a result')),
+      map((result): ExecutionState => {
+        // The strategies swallow their own exceptions and return no rows instead
+        if (!result.rows?.length) {
+          throw new Error(`The result strategy returned no rows for ${data.length} received rows`);
+        }
+        return { status: 'rows', result };
       }),
       catchError(error => {
-        this.isExecuting = false;
-        this.isLoadingState.next(false);
-        this.lastError = error?.message || 'Unknown error';
-
-        this.errorDialogService.showError({
-          title: 'Query Execution Error',
-          message: 'An error occurred while executing the query',
-          details: error?.message || 'Unknown error'
+        console.error('Error processing the query result:', error);
+        return of<ExecutionState>({
+          status: 'processingError',
+          message: `Rows were received (${data.length}) but could not be displayed`
         });
-
-        return of<MatTableRawData>({ ...this.DEFAULT_RESULT });
-      }),
-      shareReplay(1)
+      })
     );
+  }
+
+  private reportRequestError(error: any): ExecutionState {
+    console.error('Error executing XML request:', error?.message || 'Unknown error');
+
+    const dataverseError = error?.error?.error;
+    const message: string = dataverseError?.message || error?.message || 'Unknown error';
+
+    if (error instanceof RequestNotSentError && error.signInRequired) {
+      // The sign-in prompt is already on screen; a second dialog would cover it
+    } else if (dataverseError?.message) {
+      this.errorDialogService.showHttpError(error);
+    } else {
+      // No Dataverse body (network failure, missing environment): keep the original text
+      this.errorDialogService.showError({
+        title: 'Query Execution Error',
+        message: 'An error occurred while executing the query',
+        details: message
+      });
+    }
+
+    return { status: 'requestError', message, code: dataverseError?.code };
   }
 
   private extractQueryOptions(): FetchXmlQueryOptions {
@@ -193,62 +214,26 @@ export class XmlExecutorService extends BaseRequestService {
       .trim();
   }
 
-  private executeRequest(xml: string, entityNode: QueryNode, options: FetchXmlQueryOptions): Observable<MatTableRawData> {
-    return this.activeEnvironmentUrl$.pipe(
-      switchMap(envUrl => {
-        if (!envUrl) {
-          return throwError(() => new Error('No active environment URL found. Please connect to an environment before executing the query'));
-        }
+  private executeRequest(xml: string, entityNode: QueryNode, environmentUrl: string): Observable<DataverseExecuteXmlResponse> {
+    if (!xml || !entityNode) {
+      throw new Error('XML and entity information are required. Please ensure you have a valid query with entity information before executing');
+    }
 
-        const entitySetName = entityNode?.entitySetName$?.value;
-        if (!entitySetName) {
-          return throwError(() => new Error('Entity name is missing or invalid. Please select a valid entity for your query'));
-        }
+    const entitySetName = entityNode.entitySetName$?.value;
+    if (!entitySetName) {
+      throw new Error('Entity name is missing or invalid. Please select a valid entity for your query');
+    }
 
-        const sanitizedXml = this.sanitizeForTransmission(xml);
-        const encodedXml = encodeURIComponent(sanitizedXml);
-        const url = API_ENDPOINTS.execute.getResourceUrl(envUrl, entitySetName, encodedXml);
-        const headers = this.buildRequestOptions(options);
+    if (!environmentUrl) {
+      throw new Error('No active environment URL found. Please connect to an environment before executing the query');
+    }
 
-        return this.httpClient.get<DataverseExecuteXmlResponse>(url, headers).pipe(
-          switchMap(response => {
+    const sanitizedXml = this.sanitizeForTransmission(xml);
+    const encodedXml = encodeURIComponent(sanitizedXml);
+    const url = API_ENDPOINTS.execute.getResourceUrl(environmentUrl, entitySetName, encodedXml);
+    const headers = this.buildRequestOptions(this.extractQueryOptions());
 
-            this.rawDataverseResultSubject.next({...response});
-            // Access the data directly from the response
-            // The response object doesn't have a body property in this API
-            const result = response?.value || [];
-            
-            if (!result?.length) {
-              return of({ ...this.DEFAULT_RESULT });
-            }
-            
-            // Get entity attribute map with null check
-            const entityAttributeMap = this.nodeTreeService.getEntityAttributeMap();
-            
-            if (!entityAttributeMap) {
-              return of({ ...this.DEFAULT_RESULT });
-            }
-
-            const primaryEntityName = this.nodeTreeService.getPrimaryEntityName();
-            
-            if (!primaryEntityName) {
-              return of({ ...this.DEFAULT_RESULT });
-            }
-
-            try {
-              return this.processDataWithStrategy(result, entityAttributeMap, primaryEntityName);
-            } catch (err) {
-              return of({ ...this.DEFAULT_RESULT });
-            }
-          }),
-          catchError((error: HttpErrorResponse) => {
-            // Add safety check for error message to prevent undefined access
-            console.error('Error executing XML request:', error?.message || 'Unknown error');
-            return throwError(() => error);
-          })
-        );
-      })
-    );
+    return this.httpClient.get<DataverseExecuteXmlResponse>(url, headers);
   }
 
   private buildRequestOptions(options: FetchXmlQueryOptions): { headers: HttpHeaders } {
@@ -269,56 +254,21 @@ export class XmlExecutorService extends BaseRequestService {
     return { headers };
   }
 
-  private processDataWithStrategy<T extends { [key: string]: any }>(
-    data: T[],
-    entityAttributeMap: EntityAttributeMap,
-    primaryEntityName: string): Observable<MatTableRawData> {
-    if (!data?.length || !entityAttributeMap) {
-      return of({ header: {}, rows: [], __original_data: [] });
-    }
-    
-    let hasDefinedAttributes = false;
-    Object.values(entityAttributeMap).forEach(entityData => {
-      
-      if (entityData.attributeData && entityData.attributeData.length > 0) {
-        hasDefinedAttributes = true;
-      }
-    });
-    
-    // Get the environment URL, with fallback to prevent null errors
-    const environmentUrl = this._activeEnvironmentModel?.value?.url || '';
+  private processDataWithStrategy(data: any[], environmentUrl: string): Observable<MatTableRawData> {
+    const entityAttributeMap = this.nodeTreeService.getEntityAttributeMap();
+    const primaryEntityName = this.nodeTreeService.getPrimaryEntityName();
 
-    try {
-      if (!hasDefinedAttributes) {
-        const strategy = new AllAttributesStrategy(this.attributeEntityService);
-  
-        return strategy.processRawData(
-          data,
-          entityAttributeMap,
-          primaryEntityName,
-          environmentUrl
-        ).pipe(
-          catchError(error => {
-            return of({ header: {}, rows: [], __original_data: [] });
-          })
-        );
-      }
-      else {
-        const strategy = new DefinedAttributesStrategy(this.attributeEntityService);
-  
-        return strategy.processRawData(
-          data,
-          entityAttributeMap,
-          primaryEntityName,
-          environmentUrl
-        ).pipe(
-          catchError(error => {
-            return of({ header: {}, rows: [], __original_data: [] });
-          })
-        );
-      }
-    } catch (error) {
-      return of({ header: {}, rows: [], __original_data: [] });
+    if (!entityAttributeMap || !primaryEntityName) {
+      throw new Error('The query tree has no primary entity to map the result columns to');
     }
+
+    const hasDefinedAttributes = Object.values(entityAttributeMap)
+      .some(entityData => entityData.attributeData?.length > 0);
+
+    const strategy = hasDefinedAttributes
+      ? new DefinedAttributesStrategy(this.attributeEntityService)
+      : new AllAttributesStrategy(this.attributeEntityService);
+
+    return strategy.processRawData(data, entityAttributeMap, primaryEntityName, environmentUrl);
   }
 }

@@ -1,11 +1,13 @@
 import { Injectable } from '@angular/core';
-import { MatDialog, MatDialogConfig } from '@angular/material/dialog';
+import { MatDialog, MatDialogConfig, MatDialogRef } from '@angular/material/dialog';
 import { ErrorDialogComponent } from '../components/error-dialog/error-dialog.component';
 
 export interface ErrorDialogData {
   title: string;
   message: string;
   details?: string;
+  /** Adds a second button; the dialog then closes with true when it is pressed. */
+  actionLabel?: string;
 }
 
 @Injectable({
@@ -14,7 +16,7 @@ export interface ErrorDialogData {
 export class ErrorDialogService {
   constructor(private dialog: MatDialog) {}
 
-  showError(data: ErrorDialogData): void {
+  showError(data: ErrorDialogData): MatDialogRef<ErrorDialogComponent, boolean> {
     const dialogConfig = new MatDialogConfig();
     
     dialogConfig.width = '400px';
@@ -22,10 +24,11 @@ export class ErrorDialogService {
     dialogConfig.data = {
       title: data.title || 'Error',
       message: data.message || 'An error occurred',
-      details: data.details || ''
+      details: data.details || '',
+      actionLabel: data.actionLabel
     };
 
-    this.dialog.open(ErrorDialogComponent, dialogConfig);
+    return this.dialog.open(ErrorDialogComponent, dialogConfig);
   }
 
   showHttpError(error: any): void {

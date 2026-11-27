@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
-import { EnvironmentModel, UserConfig } from './types';
-import { AccountInfo, AuthenticationResult } from '@azure/msal-node';
+import { EnvironmentModel, AuthResponse, TokenResponse } from './types';
+import { AccountInfo } from '@azure/msal-node';
 
 // Authentication channels
 const AUTH_LOGIN = 'login';
@@ -11,7 +11,6 @@ const AUTH_GET_ACTIVE_ACCOUNT = 'getActiveAccount';
 const AUTH_SET_ACTIVE_ACCOUNT = 'setActiveAccount';
 const AUTH_HANDLE_REDIRECT = 'handleRedirect';
 // Environment model channels
-const ENV_SAVE_MODEL = 'saveEnvironmentModel';
 const ENV_GET_MODELS = 'getEnvironmentModels';
 const ENV_DELETE_MODEL = 'deleteEnvironmentModel';
 const ENV_SET_ACTIVE = 'setActiveEnvironment';
@@ -30,7 +29,6 @@ export type IpcChannel =
   // | typeof AUTH_SET_ENVIRONMENT_URL // Removing non-implemented method
   | typeof AUTH_GET_ACTIVE_ACCOUNT
   | typeof AUTH_SET_ACTIVE_ACCOUNT
-  | typeof ENV_SAVE_MODEL
   | typeof ENV_GET_MODELS
   | typeof ENV_DELETE_MODEL
   | typeof ENV_SET_ACTIVE
@@ -49,7 +47,6 @@ const IpcChannels = {
   AUTH_LOGOUT,
   // AUTH_SET_ENVIRONMENT_URL, // Removing non-implemented method
   AUTH_HANDLE_REDIRECT,
-  ENV_SAVE_MODEL,
   ENV_GET_MODELS,
   ENV_DELETE_MODEL,
   ENV_SET_ACTIVE,
@@ -65,17 +62,16 @@ interface ElectronAPI {
     send: (channel: string, data?: any) => void;
     receive: (channel: string, func: (...args: any[]) => void) => void;
     auth: {
-        login: (environmentUrl?: string, userConfig?: UserConfig) => Promise<AuthenticationResult>;
-        getToken: (scopes?: string[], environmentUrl?: string, userConfig?: UserConfig) => Promise<string>;
+        login: (environmentModel: EnvironmentModel) => Promise<AuthResponse>;
+        getToken: (environmentModel: EnvironmentModel) => Promise<TokenResponse>;
         logout: () => Promise<void>;
         getActiveAccount: () => Promise<AccountInfo | null>;
         handleAuthRedirect: (params: any) => Promise<void>;
         handleRedirect: (params: any) => Promise<any>;
     };
     environment: {
-        saveModel: (environmentModel: EnvironmentModel) => Promise<any>;
         getModels: () => Promise<EnvironmentModel[]>;
-        deleteModel: (environmentUrl: string) => Promise<any>;
+        deleteModel: (environmentModel: EnvironmentModel) => Promise<any>;
         setActive: (environmentModel: EnvironmentModel) => Promise<boolean>;
         getActive: () => Promise<EnvironmentModel | null>;
     };
@@ -126,24 +122,26 @@ const electronAPI: ElectronAPI = {
         }
     },
     receive: (channel: string, func: (...args: any[]) => void) => {
-        const validChannels = ['deep-link', 'update-available', 'update-not-available', 'update-error', 'update-progress', 'update-downloaded'];
+        const validChannels = [
+            'deep-link', 'update-available', 'update-not-available', 'update-error', 'update-progress', 'update-downloaded',
+            'account-changed', 'environment-changed', 'auth-success', 'auth-failed', 'app-returned-from-auth'
+        ];
         if (validChannels.includes(channel)) {
             // Deliberately strip event as it includes `sender` 
             ipcRenderer.on(channel, (_event: IpcRendererEvent, ...args: any[]) => func(...args));
         }
     },
     auth: {
-        login: (environmentUrl?: string, userConfig?: UserConfig) => ipcRenderer.invoke(IpcChannels.AUTH_LOGIN, environmentUrl, userConfig),
-        getToken: (scopes?: string[], environmentUrl?: string, userConfig?: UserConfig) => ipcRenderer.invoke(IpcChannels.AUTH_GET_TOKEN, scopes, environmentUrl, userConfig),
+        login: (environmentModel: EnvironmentModel) => ipcRenderer.invoke(IpcChannels.AUTH_LOGIN, environmentModel),
+        getToken: (environmentModel: EnvironmentModel) => ipcRenderer.invoke(IpcChannels.AUTH_GET_TOKEN, environmentModel),
         logout: () => ipcRenderer.invoke(IpcChannels.AUTH_LOGOUT),
         getActiveAccount: () => ipcRenderer.invoke(IpcChannels.AUTH_GET_ACTIVE_ACCOUNT),
         handleAuthRedirect: (params: any) => ipcRenderer.invoke(IpcChannels.AUTH_HANDLE_REDIRECT, params),
         handleRedirect: (params: any) => ipcRenderer.invoke(IpcChannels.AUTH_HANDLE_REDIRECT, params)
     },
     environment: {
-        saveModel: (environmentModel: EnvironmentModel) => ipcRenderer.invoke(IpcChannels.ENV_SAVE_MODEL, environmentModel),
         getModels: () => ipcRenderer.invoke(IpcChannels.ENV_GET_MODELS),
-        deleteModel: (environmentUrl: string) => ipcRenderer.invoke(IpcChannels.ENV_DELETE_MODEL, environmentUrl),
+        deleteModel: (environmentModel: EnvironmentModel) => ipcRenderer.invoke(IpcChannels.ENV_DELETE_MODEL, environmentModel),
         setActive: (environmentModel: EnvironmentModel) => ipcRenderer.invoke(IpcChannels.ENV_SET_ACTIVE, environmentModel),
         getActive: () => ipcRenderer.invoke(IpcChannels.ENV_GET_ACTIVE)
     },
