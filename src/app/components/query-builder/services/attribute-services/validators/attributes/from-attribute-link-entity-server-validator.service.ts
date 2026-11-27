@@ -38,13 +38,11 @@ export class FromAttributeLinkEntityServerValidatorService implements IAttribute
             return attribute.value$.pipe(
               distinctUntilChanged(),
               switchMap(attributeValue => {
+                // `from` is optional in FetchXML and an empty one is not rendered
                 if (!attributeValue) {
-                  return of({
-                    isValid: false,
-                    errors: ['Please setup a valid parent entity']
-                  });
+                  return of(VALID_RESULT);
                 }
-                return this.attributeService.getAttributes(entityNameAttribute.value$.value).pipe(
+                return this.attributeService.getJoinAttributes(entityNameAttribute.value$.value).pipe(
                   map(attributes => {
                     if (!attributes || attributes.length === 0) {
                       return {
