@@ -9,6 +9,7 @@ import { EnvironmentModel } from 'src/app/models/environment-model';
 import { QueryNode } from '../models/query-node';
 import { provideQueryBuilderTesting } from './query-builder-test-providers';
 import { NodeTreeService } from './node-tree.service';
+import { ColumnPlan } from './result-table/column-plan';
 import { ExecutionState, RowsState, XmlExecutorService } from './xml-executor.service';
 
 describe('XmlExecutorService paging and request limits', () => {
@@ -31,6 +32,7 @@ describe('XmlExecutorService paging and request limits', () => {
   let environment$: BehaviorSubject<EnvironmentModel>;
   let dialog: jasmine.SpyObj<MatDialog>;
   let states: ExecutionState[];
+  let columnPlan: jasmine.Spy<() => ColumnPlan>;
 
   const environment = (host: string) => ({ url: `https://${host}.example.com` }) as EnvironmentModel;
   const isExecute = (url: string) => url.includes('?fetchXml=');
@@ -62,9 +64,8 @@ describe('XmlExecutorService paging and request limits', () => {
     });
 
     const nodeTree = TestBed.inject(NodeTreeService);
-    spyOn(nodeTree, 'getEntityAttributeMap').and.returnValue(
-      { account: { entityAlias: null, attributeData: [], isPrimaryEntity: true } });
-    spyOn(nodeTree, 'getPrimaryEntityName').and.returnValue('account');
+    columnPlan = spyOn(nodeTree, 'getColumnPlan').and.returnValue(
+      { aggregate: false, entities: [{ entityName: 'account', alias: null, attributes: [], allAttributes: true }] });
 
     environment$ = TestBed.inject(ACTIVE_ENVIRONMENT_MODEL);
     environment$.next(environment('first'));
@@ -164,6 +165,27 @@ describe('XmlExecutorService paging and request limits', () => {
 
     expect(names()).toEqual(['A', 'B', 'C', 'D']);
     expect(rowsState().continuation).toBeUndefined();
+  });
+
+  it('shapes the next page with the column plan of the first one and finds columns that only it has', async () => {
+    const attribute = { name: 'fullname', alias: null, aggregate: null, groupBy: false };
+    columnPlan.and.returnValue({
+      aggregate: false,
+      entities: [
+        { entityName: 'account', alias: null, attributes: [{ ...attribute, name: 'name' }], allAttributes: false },
+        { entityName: 'contact', alias: null, attributes: [attribute], allAttributes: false }
+      ]
+    });
+    await executeWith(moreRows('A'));
+    expect(Object.keys(rowsState().result.header)).toEqual(['name', 'contact#1.fullname']);
+    columnPlan.and.throwError('the tree must not be read again');
+
+    service.loadMore();
+    executeRequest().flush({ value: [{ 'name': 'B', 'contact1.fullname': 'Contact' }] });
+    await settle();
+
+    expect(Object.keys(rowsState().result.header)).toEqual(['name', 'contact1.fullname']);
+    expect(rowsState().result.rows[1].attributes.get('contact1.fullname').attributeRawValue).toBe('Contact');
   });
 
   it('pages without a cookie when Dataverse returns none', async () => {

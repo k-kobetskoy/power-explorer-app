@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@angular/core';
-import { Observable, Subject, of, defer, switchMap, catchError, BehaviorSubject, map, startWith, take, throwIfEmpty, filter, merge } from 'rxjs';
+import { Observable, Subject, of, defer, switchMap, catchError, BehaviorSubject, map, startWith, take, throwIfEmpty, filter, merge, forkJoin } from 'rxjs';
 import { BaseRequestService } from './entity-services/abstract/base-request.service';
 import { API_ENDPOINTS } from 'src/app/config/api-endpoints';
 import { HttpErrorResponse, HttpHeaders } from '@angular/common/http';
@@ -7,8 +7,8 @@ import { NodeTreeService } from './node-tree.service';
 import { AttributeEntityService } from './entity-services/attribute-entity.service';
 import { QueryNode } from '../models/query-node';
 import { ErrorDialogService } from 'src/app/services/error-dialog.service';
-import { AllAttributesStrategy, RowData } from './result-table/all-attributes-strategy';
-import { DefinedAttributesStrategy } from './result-table/defined-attributes-strategy';
+import { ColumnPlan } from './result-table/column-plan';
+import { EntityMetadata, RowData, entitiesNeedingMetadata, shapeResult } from './result-table/shape-result';
 import { ACTIVE_ENVIRONMENT_MODEL } from 'src/app/models/tokens';
 import { EnvironmentModel } from 'src/app/models/environment-model';
 import { MAX_REQUEST_URL_LENGTH, getPageableQueryPage, readPagingCookie, sanitizeForTransmission, withFirstPage, withPage } from './fetch-xml-request';
@@ -57,8 +57,6 @@ export interface XmlExecutionResult {
   __original_data?: any[]; // Original data from the API response for reference
 }
 
-type EntityAttributeMapping = ReturnType<NodeTreeService['getEntityAttributeMap']>;
-
 /** What is needed to request the next page and to shape it like the pages before it. */
 export interface QueryContinuation {
   /** The FetchXML of the first request */
@@ -67,8 +65,7 @@ export interface QueryContinuation {
   /** The environment of the first page; no page is requested from any other one */
   readonly environmentUrl: string;
   /** Read from the query tree for the first page: the tree may have been edited since */
-  readonly entityAttributeMap: EntityAttributeMapping;
-  readonly primaryEntityName: string;
+  readonly columnPlan: ColumnPlan;
   readonly nextPage: number;
   readonly pagingCookie: string | null;
   /** The rows of all received pages */
@@ -193,20 +190,18 @@ export class XmlExecutorService extends BaseRequestService {
           }
 
           // read inside defer, so that a broken query tree is a processing error
-          let entityAttributeMap: EntityAttributeMapping;
-          let primaryEntityName: string;
+          let columnPlan: ColumnPlan;
 
           return defer(() => {
-            entityAttributeMap = this.nodeTreeService.getEntityAttributeMap();
-            primaryEntityName = this.nodeTreeService.getPrimaryEntityName();
-            return this.processRows(data, entityAttributeMap, primaryEntityName, environmentUrl);
+            columnPlan = this.nodeTreeService.getColumnPlan();
+            return this.processRows(data, columnPlan, environmentUrl);
           }).pipe(
             map((result): ExecutionState => ({
               status: 'rows',
               result,
               executionId,
               continuation: this.buildContinuation(response, getPageableQueryPage(sentXml), {
-                xml: sentXml, entitySetName, environmentUrl, entityAttributeMap, primaryEntityName, receivedRows: data
+                xml: sentXml, entitySetName, environmentUrl, columnPlan, receivedRows: data
               })
             })),
             catchError(error => of(this.reportProcessingError(error, data.length)))
@@ -261,7 +256,7 @@ export class XmlExecutorService extends BaseRequestService {
 
     const receivedRows = continuation.receivedRows.concat(page);
 
-    return this.processRows(receivedRows, continuation.entityAttributeMap, continuation.primaryEntityName, continuation.environmentUrl).pipe(
+    return this.processRows(receivedRows, continuation.columnPlan, continuation.environmentUrl).pipe(
       map((result): ExecutionState => {
         // The raw result panel shows one response holding the rows of all pages
         this.rawDataverseResultSubject.next({ ...response, value: receivedRows });
@@ -296,24 +291,27 @@ export class XmlExecutorService extends BaseRequestService {
     };
   }
 
-  private processRows(
-    data: any[],
-    entityAttributeMap: EntityAttributeMapping,
-    primaryEntityName: string,
-    environmentUrl: string
-  ): Observable<MatTableRawData> {
-    return defer(() => this.processDataWithStrategy(data, entityAttributeMap, primaryEntityName, environmentUrl)).pipe(
-      // The metadata stream behind a strategy stays open and follows environment changes
+  private processRows(data: any[], columnPlan: ColumnPlan, environmentUrl: string): Observable<MatTableRawData> {
+    return defer(() => this.loadMetadata(columnPlan)).pipe(
+      // The metadata stream stays open and follows environment changes
       take(1),
-      throwIfEmpty(() => new Error('The result strategy completed without a result')),
-      map(result => {
-        // The strategies swallow their own exceptions and return no rows instead
-        if (!result.rows?.length) {
-          throw new Error(`The result strategy returned no rows for ${data.length} received rows`);
-        }
-        return result;
-      })
+      throwIfEmpty(() => new Error('The attribute metadata completed without a result')),
+      map(metadata => shapeResult(data, columnPlan, metadata, environmentUrl))
     );
+  }
+
+  /** Attribute names and types for the columns. An entity whose metadata fails to load has none. */
+  private loadMetadata(columnPlan: ColumnPlan): Observable<EntityMetadata> {
+    if (!columnPlan?.entities.length) {
+      throw new Error('The query tree has no primary entity to map the result columns to');
+    }
+
+    return forkJoin(entitiesNeedingMetadata(columnPlan).map(entityName =>
+      this.attributeEntityService.getAttributes(entityName).pipe(
+        take(1),
+        map(attributes => [entityName, new Map(attributes.map(attribute => [attribute.logicalName, attribute]))] as const)
+      ))
+    ).pipe(map(entries => new Map(entries)));
   }
 
   private reportProcessingError(error: any, rowCount: number) {
@@ -414,25 +412,5 @@ export class XmlExecutorService extends BaseRequestService {
     });
 
     return { headers };
-  }
-
-  private processDataWithStrategy(
-    data: any[],
-    entityAttributeMap: EntityAttributeMapping,
-    primaryEntityName: string,
-    environmentUrl: string
-  ): Observable<MatTableRawData> {
-    if (!entityAttributeMap || !primaryEntityName) {
-      throw new Error('The query tree has no primary entity to map the result columns to');
-    }
-
-    const hasDefinedAttributes = Object.values(entityAttributeMap)
-      .some(entityData => entityData.attributeData?.length > 0);
-
-    const strategy = hasDefinedAttributes
-      ? new DefinedAttributesStrategy(this.attributeEntityService)
-      : new AllAttributesStrategy(this.attributeEntityService);
-
-    return strategy.processRawData(data, entityAttributeMap, primaryEntityName, environmentUrl);
   }
 }

@@ -6,9 +6,8 @@ import { ACTIVE_ENVIRONMENT_MODEL } from 'src/app/models/tokens';
 import { EnvironmentModel } from 'src/app/models/environment-model';
 import { QueryNode } from '../models/query-node';
 import { provideQueryBuilderTesting } from './query-builder-test-providers';
-import { EntityAttributeMap } from './entity-services/attribute-entity.service';
 import { NodeTreeService } from './node-tree.service';
-import { AllAttributesStrategy } from './result-table/all-attributes-strategy';
+import { ColumnPlan, PlannedAttribute, PlannedEntity } from './result-table/column-plan';
 import { ExecutionState, XmlExecutorService } from './xml-executor.service';
 
 describe('XmlExecutorService execution pipeline', () => {
@@ -22,18 +21,18 @@ describe('XmlExecutorService execution pipeline', () => {
   let http: HttpTestingController;
   let environment$: BehaviorSubject<EnvironmentModel>;
   let dialog: jasmine.SpyObj<MatDialog>;
-  let entityMap: jasmine.Spy<() => EntityAttributeMap>;
+  let columnPlan: jasmine.Spy<() => ColumnPlan>;
   let states: ExecutionState[];
 
-  const allAttributes: EntityAttributeMap = { account: { entityAlias: null, attributeData: [], isPrimaryEntity: true } };
-  const definedAttributes: EntityAttributeMap = {
-    account: { entityAlias: null, attributeData: [{ attributeLogicalName: 'name', alias: null }], isPrimaryEntity: true }
-  };
+  const account = (attributes: PlannedAttribute[]): ColumnPlan =>
+    ({ aggregate: false, entities: [{ entityName: 'account', alias: null, attributes, allAttributes: !attributes.length }] });
+  const nameAttribute: PlannedAttribute = { name: 'name', alias: null, aggregate: null, groupBy: false };
+  const allAttributes = account([]);
+  const definedAttributes = account([nameAttribute]);
 
   const environment = (host: string) => ({ url: `https://${host}.example.com` }) as EnvironmentModel;
   const executeRequests = () => http.match(request => request.url.includes('?fetchXml='));
   const executeRequest = (): TestRequest => http.expectOne(request => request.url.includes('?fetchXml='));
-  // the all-attributes strategy resolves through a Promise, hence the tick
   const flushMetadata = () => {
     http.match(request => request.url.includes('/Attributes?')).forEach(r => r.flush(metadata));
     return new Promise(resolve => setTimeout(resolve));
@@ -47,8 +46,7 @@ describe('XmlExecutorService execution pipeline', () => {
     });
 
     const nodeTree = TestBed.inject(NodeTreeService);
-    entityMap = spyOn(nodeTree, 'getEntityAttributeMap').and.returnValue(allAttributes);
-    spyOn(nodeTree, 'getPrimaryEntityName').and.returnValue('account');
+    columnPlan = spyOn(nodeTree, 'getColumnPlan').and.returnValue(allAttributes);
 
     environment$ = TestBed.inject(ACTIVE_ENVIRONMENT_MODEL);
     environment$.next(environment('first'));
@@ -74,18 +72,12 @@ describe('XmlExecutorService execution pipeline', () => {
     expect(states.map(s => s.status)).toEqual(['idle', 'loading', 'loading', 'empty']);
   });
 
-  const joinDefinedAttributes: EntityAttributeMap = {
-    ...definedAttributes,
-    contact: { entityAlias: 'c', attributeData: [{ attributeLogicalName: 'name', alias: null }], isPrimaryEntity: false }
-  };
-  const joinAllAttributes: EntityAttributeMap = {
-    ...allAttributes,
-    contact: { entityAlias: 'c', attributeData: [], isPrimaryEntity: false }
-  };
-  // an attribute with an alias but no name makes the service load all attributes of the entity
-  const aliasOnlyAttribute: EntityAttributeMap = {
-    account: { entityAlias: null, attributeData: [{ attributeLogicalName: null, alias: 'x' }], isPrimaryEntity: true }
-  };
+  const contact = (attributes: PlannedAttribute[]): PlannedEntity =>
+    ({ entityName: 'contact', alias: 'c', attributes, allAttributes: !attributes.length });
+  const joinDefinedAttributes: ColumnPlan = { aggregate: false, entities: [...definedAttributes.entities, contact([nameAttribute])] };
+  const joinAllAttributes: ColumnPlan = { aggregate: false, entities: [...allAttributes.entities, contact([])] };
+  // an attribute with an alias but no name
+  const aliasOnlyAttribute = account([{ ...nameAttribute, name: null, alias: 'x' }]);
 
   for (const [name, map] of [
     ['all attributes', allAttributes],
@@ -95,7 +87,7 @@ describe('XmlExecutorService execution pipeline', () => {
     ['attribute with an alias only', aliasOnlyAttribute]
   ] as const) {
     it(`sends nothing when the environment changes after a completed execution (${name})`, async () => {
-      entityMap.and.returnValue(map);
+      columnPlan.and.returnValue(map);
       service.execute(XML, entityNode);
       executeRequest().flush({ value: [{ name: 'Contoso', accountid: '1' }] });
       await flushMetadata();
@@ -140,9 +132,9 @@ describe('XmlExecutorService execution pipeline', () => {
     expect(dialog.open).toHaveBeenCalledTimes(1);
   });
 
-  it('reports a processing error, not empty, when a strategy throws', () => {
+  it('reports a processing error, not empty, when the columns cannot be built', () => {
     const failure = new Error('boom');
-    spyOn(AllAttributesStrategy.prototype, 'processRawData').and.throwError(failure);
+    columnPlan.and.throwError(failure);
 
     service.execute(XML, entityNode);
     executeRequest().flush({ value: [{ name: 'Contoso' }] });
@@ -152,15 +144,11 @@ describe('XmlExecutorService execution pipeline', () => {
     expect(dialog.open).not.toHaveBeenCalled();
   });
 
-  it('reports a processing error when a strategy swallows its exception and returns no rows', async () => {
-    // no attributeData: the defined-attributes strategy throws inside and catches it itself
-    entityMap.and.returnValue({
-      account: { entityAlias: null, attributeData: [{ attributeLogicalName: 'name', alias: null }], isPrimaryEntity: false }
-    });
+  it('reports a processing error when the query has no primary entity', () => {
+    columnPlan.and.returnValue({ aggregate: false, entities: [] });
 
     service.execute(XML, entityNode);
     executeRequest().flush({ value: [{ name: 'Contoso' }] });
-    await flushMetadata();
 
     expect(lastState().status).toBe('processingError');
   });

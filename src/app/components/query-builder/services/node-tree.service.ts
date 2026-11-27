@@ -11,6 +11,7 @@ import { NodeFactoryService } from './attribute-services/node-factory.service';
 import { VALID_RESULT, ValidationResult, ValidationService } from './validation.service';
 import { AttributeNames } from '../models/constants/attribute-names';
 import { tap, shareReplay } from 'rxjs/operators';
+import { ColumnPlan, buildColumnPlan } from './result-table/column-plan';
 @Injectable({ providedIn: 'root' })
 export class NodeTreeService {
   private _nodeTree$: BehaviorSubject<QueryNodeTree> = new BehaviorSubject<QueryNodeTree>(null);
@@ -313,132 +314,9 @@ export class NodeTreeService {
     }
   }
 
-  getPrimaryEntityName(): string {
-    const rootNode = this._nodeTree$.value.root;
-
-    const entityNode = rootNode.next;
-
-    if (!entityNode) {
-      return null;
-    }
-
-    const entityNameAttribute = entityNode.attributes$.value.find(attr => attr.editorName === AttributeNames.entityName);
-
-    if (!entityNameAttribute) {
-      return null;
-    }
-
-    return entityNameAttribute.value$.value;
-  }
-
-  getEntityAttributeMap(): EntityAttributeMap {
-    const map: EntityAttributeMap = {};
-    const rootNode = this._nodeTree$.value.root;
-
-    if (!rootNode) {
-      return map;
-    }
-
-    
-    this.traverseNodeTree(map, rootNode.next, {
-      entityAlias: null,
-      attributeData: [],
-      isPrimaryEntity: true,
-      primaryIdAttribute: null
-    }, null);
-
-    return map;
-  }
-
-  traverseNodeTree(map: EntityAttributeMap, queryNode: QueryNode, entityAttributeData: EntityAttributeData, entityName: string | null) {
-    if (!queryNode) {
-      if (entityName) {
-        map[entityName] = {
-          entityAlias: entityAttributeData.entityAlias,
-          attributeData: [...entityAttributeData.attributeData],
-          isPrimaryEntity: entityAttributeData.isPrimaryEntity,
-          primaryIdAttribute: entityAttributeData.primaryIdAttribute
-        };
-      }
-      return;
-    }
-
-    
-    const nodeIsEntityOrLink = queryNode.tagName === QueryNodeData.Entity.TagName || queryNode.tagName === QueryNodeData.Link.TagName;
-
-    if (nodeIsEntityOrLink) {
-      // Save current entity data if we have a valid entity name
-      if (entityName !== null) {
-        map[entityName] = {
-          entityAlias: entityAttributeData.entityAlias,
-          attributeData: [...entityAttributeData.attributeData],
-          isPrimaryEntity: entityAttributeData.isPrimaryEntity,
-          primaryIdAttribute: entityAttributeData.primaryIdAttribute
-        };
-      }
-
-      // Get attributes from the node
-      const attributes = queryNode.attributes$.value;
-      
-      const entityNameAttribute = attributes.find(attr => attr.editorName === AttributeNames.entityName);
-
-      if (entityNameAttribute) {
-        const entityLogicalName = entityNameAttribute.value$.value;
-
-        // Detect primary ID attribute - conventionally it's entitylogicalname + "id"
-        // For example, "account" would have primary ID "accountid"
-        const primaryIdAttribute = `${entityLogicalName}id`;
-
-        if (!map[entityLogicalName]) {
-          const isPrimary = queryNode.tagName === QueryNodeData.Entity.TagName &&
-              !entityName && // No previous entity
-              !queryNode.parent?.attributes$.value.some(a => a.editorName === AttributeNames.entityAlias); // Not an aliased entity
-                    
-          map[entityLogicalName] = {
-            entityAlias: null,
-            attributeData: [],
-            // If this is the first entity in traversal, mark it as primary
-            isPrimaryEntity: isPrimary,
-            primaryIdAttribute: primaryIdAttribute
-          };
-        }
-
-        const nextEntityAttributeData: EntityAttributeData = {
-          entityAlias: null,
-          attributeData: [],
-          // Carry forward primary entity status if this is a continuation
-          isPrimaryEntity: map[entityLogicalName].isPrimaryEntity,
-          primaryIdAttribute: primaryIdAttribute
-        };
-
-        const entityAliasAttribute = attributes.find(attr => attr.editorName === AttributeNames.entityAlias);
-        nextEntityAttributeData.entityAlias = entityAliasAttribute ? entityAliasAttribute.value$.value : null;
-        
-        this.traverseNodeTree(map, queryNode.next, nextEntityAttributeData, entityLogicalName);
-      } else {
-        // Continue traversal with current entity context if no entity name found
-        this.traverseNodeTree(map, queryNode.next, entityAttributeData, entityName);
-      }
-    } else if (queryNode.tagName === QueryNodeData.Attribute.TagName) {
-      // Handle Attribute nodes
-      const attributes = queryNode.attributes$.value;
-      
-      const attributeLogicalName = attributes.find(attr => attr.editorName === AttributeNames.attributeName)?.value$.value;
-      const attributeAlias = attributes.find(attr => attr.editorName === AttributeNames.attributeAlias)?.value$.value;
-
-      if (attributeLogicalName || attributeAlias) {
-        entityAttributeData.attributeData.push({
-          attributeLogicalName: attributeLogicalName || null,
-          alias: attributeAlias || null
-        });
-      } else {
-      }
-      
-      this.traverseNodeTree(map, queryNode.next, entityAttributeData, entityName);
-    } else {
-      // For other node types, just continue traversal with current context
-      this.traverseNodeTree(map, queryNode.next, entityAttributeData, entityName);
-    }
+  /** What the result columns are mapped from, read from the current tree. */
+  getColumnPlan(): ColumnPlan {
+    return buildColumnPlan(this._nodeTree$.value.root);
   }
 
   private cleanupNodeAndChildren(node: QueryNode): void {
@@ -454,20 +332,4 @@ export class NodeTreeService {
       current = next;
     }
   }
-}
-
-interface EntityAttributeMap {
-  [entityLogicalName: string]: EntityAttributeData;
-}
-
-interface EntityAttributeData {
-  entityAlias: string | null;
-  attributeData: AttributeData[];
-  primaryIdAttribute?: string | null;
-  isPrimaryEntity?: boolean;
-}
-
-interface AttributeData {
-  attributeLogicalName: string | null;
-  alias: string | null;
 }
