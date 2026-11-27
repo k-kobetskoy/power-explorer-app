@@ -4,7 +4,7 @@ import { BehaviorSubject, Subject } from 'rxjs';
 import { ExternalLinkService } from 'src/app/services/external-link.service';
 import { ACTIVE_ENVIRONMENT_MODEL } from 'src/app/models/tokens';
 import { provideQueryBuilderTesting } from '../services/query-builder-test-providers';
-import { ExecutionState, MatTableRawData, XmlExecutorService } from '../services/xml-executor.service';
+import { ExecutionState, MatTableRawData, QueryContinuation, XmlExecutorService } from '../services/xml-executor.service';
 import { ResultTableComponent } from './result-table.component';
 
 describe('ResultTableComponent', () => {
@@ -54,6 +54,59 @@ describe('ResultTableComponent', () => {
     flush();
 
     expect(externalLink.openExternalLink).toHaveBeenCalledOnceWith(link);
+  }));
+
+  const manyRows = (count: number): MatTableRawData => ({
+    header: result.header,
+    rows: Array.from({ length: count }, (_, rowIndex) => ({ ...result.rows[0], rowIndex }))
+  });
+
+  it('fits the page size to the height of the table without a vertical scroll', fakeAsync(() => {
+    const host = fixture.nativeElement as HTMLElement;
+    document.body.appendChild(host);
+    host.style.height = '600px';
+    host.style.width = '900px';
+
+    emit({ status: 'rows', result: manyRows(200), executionId: 1 });
+
+    const component = fixture.componentInstance;
+    const scroll = host.querySelector<HTMLElement>('.table-scroll-container');
+    const rowHeight = host.querySelector('tr.mat-mdc-row').getBoundingClientRect().height;
+
+    expect(component.pageSize).toBeGreaterThan(10);
+    expect(component.pageSizeOptions).toContain(component.pageSize);
+    expect(host.querySelectorAll('tr.mat-mdc-row').length).toBe(component.pageSize);
+    expect(scroll.scrollHeight).toBeLessThanOrEqual(scroll.clientHeight);
+    // no room is left for another row
+    expect(scroll.clientHeight - scroll.scrollHeight).toBeLessThan(rowHeight);
+    host.remove();
+  }));
+
+  it('keeps the size picked in the paginator for the next results', fakeAsync(() => {
+    emit({ status: 'rows', result: manyRows(200), executionId: 1 });
+    fixture.componentInstance.onPageChange({ pageIndex: 0, pageSize: 100, length: 200 });
+
+    emit({ status: 'rows', result: manyRows(200), executionId: 2 });
+
+    expect(fixture.componentInstance.pageSize).toBe(100);
+  }));
+
+  it('keeps the current page when rows are appended', fakeAsync(() => {
+    const continuation = { environmentUrl: undefined } as QueryContinuation;
+    const first = manyRows(60);
+    emit({ status: 'rows', result: first, executionId: 1, continuation });
+    expect(text()).toContain('60 rows loaded, more are available');
+
+    const component = fixture.componentInstance;
+    component.onPageChange({ pageIndex: 1, pageSize: component.pageSize, length: 60 });
+    emit({ status: 'rows', result: first, executionId: 1, continuation, isLoadingMore: true });
+    expect(component.pageIndex).toBe(1);
+
+    emit({ status: 'rows', result: manyRows(120), executionId: 1 });
+
+    expect(component.pageIndex).toBe(1);
+    expect(component.totalRows).toBe(120);
+    expect(text()).not.toContain('more are available');
   }));
 
   it('does not bring previous rows back after an empty result when the format is toggled', fakeAsync(() => {

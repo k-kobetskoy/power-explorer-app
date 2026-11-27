@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@angular/core';
-import { Observable, Subject, of, defer, switchMap, catchError, BehaviorSubject, map, startWith, take, throwIfEmpty } from 'rxjs';
+import { Observable, Subject, of, defer, switchMap, catchError, BehaviorSubject, map, startWith, take, throwIfEmpty, filter, merge } from 'rxjs';
 import { BaseRequestService } from './entity-services/abstract/base-request.service';
 import { API_ENDPOINTS } from 'src/app/config/api-endpoints';
 import { HttpHeaders } from '@angular/common/http';
@@ -11,6 +11,7 @@ import { AllAttributesStrategy, RowData } from './result-table/all-attributes-st
 import { DefinedAttributesStrategy } from './result-table/defined-attributes-strategy';
 import { ACTIVE_ENVIRONMENT_MODEL } from 'src/app/models/tokens';
 import { EnvironmentModel } from 'src/app/models/environment-model';
+import { MAX_REQUEST_URL_LENGTH, getPageableQueryPage, readPagingCookie, sanitizeForTransmission, withPage } from './fetch-xml-request';
 
 interface FetchXmlQueryOptions {
   maxPageSize?: number;
@@ -55,19 +56,48 @@ export interface XmlExecutionResult {
   __original_data?: any[]; // Original data from the API response for reference
 }
 
+type EntityAttributeMapping = ReturnType<NodeTreeService['getEntityAttributeMap']>;
+
+/** What is needed to request the next page and to shape it like the pages before it. */
+export interface QueryContinuation {
+  /** The FetchXML of the first request */
+  readonly xml: string;
+  readonly entitySetName: string;
+  /** The environment of the first page; no page is requested from any other one */
+  readonly environmentUrl: string;
+  /** Read from the query tree for the first page: the tree may have been edited since */
+  readonly entityAttributeMap: EntityAttributeMapping;
+  readonly primaryEntityName: string;
+  readonly nextPage: number;
+  readonly pagingCookie: string | null;
+  /** The rows of all received pages */
+  readonly receivedRows: any[];
+}
+
+export interface RowsState {
+  status: 'rows';
+  result: MatTableRawData;
+  /** The same for all states of one execution, so that loaded pages can be told from a new result */
+  executionId?: number;
+  /** Set while Dataverse has more rows than were received */
+  continuation?: QueryContinuation;
+  isLoadingMore?: boolean;
+  /** The last attempt to load more rows failed; the rows received before it are kept */
+  loadMoreError?: { message: string; code?: string };
+}
+
 /** The single state of the latest query execution; the result table renders from it. */
 export type ExecutionState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'rows'; result: MatTableRawData }
+  | RowsState
   | { status: 'empty' }
   | { status: 'requestError'; message: string; code?: string }
   | { status: 'processingError'; message: string };
 
-interface ExecutionRequest {
-  xml: string;
-  entityNode: QueryNode;
-}
+type ExecutionRequest =
+  | { kind: 'execute'; xml: string; entityNode: QueryNode }
+  | { kind: 'loadMore'; rows: RowsState };
 
 // Define an interface for the Dataverse response
 interface DataverseExecuteXmlResponse {
@@ -84,6 +114,8 @@ interface DataverseExecuteXmlResponse {
   '@Microsoft.Dynamics.CRM.totalrecordcount'?: number;
   '@Microsoft.Dynamics.CRM.totalrecordcountlimitexceeded'?: boolean;
   '@Microsoft.Dynamics.CRM.globalmetadataversion'?: string;
+  '@Microsoft.Dynamics.CRM.morerecords'?: boolean;
+  '@Microsoft.Dynamics.CRM.fetchxmlpagingcookie'?: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -93,6 +125,7 @@ export class XmlExecutorService extends BaseRequestService {
   private readonly executionRequests$ = new Subject<ExecutionRequest>();
   private readonly executionState = new BehaviorSubject<ExecutionState>({ status: 'idle' });
   public readonly state$: Observable<ExecutionState> = this.executionState.asObservable();
+  private lastExecutionId = 0;
 
   constructor(
     private attributeEntityService: AttributeEntityService,
@@ -103,7 +136,9 @@ export class XmlExecutorService extends BaseRequestService {
     super();
     // switchMap: a new execution cancels whatever the previous one still has in flight
     this.executionRequests$
-      .pipe(switchMap(request => this.runExecution(request)))
+      .pipe(switchMap(request => request.kind === 'execute'
+        ? this.runExecution(request.xml, request.entityNode)
+        : this.runLoadMore(request.rows)))
       .subscribe(state => this.executionState.next(state));
   }
 
@@ -113,19 +148,67 @@ export class XmlExecutorService extends BaseRequestService {
 
   /** Starts a query execution. The outcome is published on state$. */
   execute(xml: string, entityNode: QueryNode): void {
-    this.executionRequests$.next({ xml, entityNode });
+    this.executionRequests$.next({ kind: 'execute', xml, entityNode });
+  }
+
+  /**
+   * Requests the next page of the shown result and appends its rows. Does nothing when there is no
+   * next page, a page is already on its way or another environment is active.
+   */
+  loadMore(): void {
+    const state = this.executionState.value;
+
+    if (state.status !== 'rows' || !state.continuation || state.isLoadingMore
+      || this._activeEnvironmentModel.value?.url !== state.continuation.environmentUrl) {
+      return;
+    }
+
+    this.executionRequests$.next({ kind: 'loadMore', rows: state });
   }
 
   /** Emits 'loading' and then one final state. Never errors, so the pipeline stays alive. */
-  private runExecution({ xml, entityNode }: ExecutionRequest): Observable<ExecutionState> {
+  private runExecution(xml: string, entityNode: QueryNode): Observable<ExecutionState> {
+    const executionId = ++this.lastExecutionId;
+
     return defer(() => {
       // Read once: a later environment change must not re-send this query
       const environmentUrl = this._activeEnvironmentModel.value?.url;
 
-      return this.executeRequest(xml, entityNode, environmentUrl).pipe(
+      if (!xml || !entityNode) {
+        throw new Error('XML and entity information are required. Please ensure you have a valid query with entity information before executing');
+      }
+
+      const entitySetName: string = entityNode.entitySetName$?.value;
+      const sentXml = sanitizeForTransmission(xml);
+
+      return this.executeRequest(sentXml, entitySetName, environmentUrl).pipe(
         switchMap(response => {
           this.rawDataverseResultSubject.next({ ...response });
-          return this.toResultState(response?.value || [], environmentUrl);
+          const data = response?.value || [];
+
+          if (!data.length) {
+            return of<ExecutionState>({ status: 'empty' });
+          }
+
+          // read inside defer, so that a broken query tree is a processing error
+          let entityAttributeMap: EntityAttributeMapping;
+          let primaryEntityName: string;
+
+          return defer(() => {
+            entityAttributeMap = this.nodeTreeService.getEntityAttributeMap();
+            primaryEntityName = this.nodeTreeService.getPrimaryEntityName();
+            return this.processRows(data, entityAttributeMap, primaryEntityName, environmentUrl);
+          }).pipe(
+            map((result): ExecutionState => ({
+              status: 'rows',
+              result,
+              executionId,
+              continuation: this.buildContinuation(response, getPageableQueryPage(sentXml), {
+                xml: sentXml, entitySetName, environmentUrl, entityAttributeMap, primaryEntityName, receivedRows: data
+              })
+            })),
+            catchError(error => of(this.reportProcessingError(error, data.length)))
+          );
         })
       );
     }).pipe(
@@ -134,33 +217,112 @@ export class XmlExecutorService extends BaseRequestService {
     );
   }
 
-  private toResultState(data: any[], environmentUrl: string): Observable<ExecutionState> {
-    if (!data.length) {
-      return of<ExecutionState>({ status: 'empty' });
+  /**
+   * Emits the shown rows marked as loading and then the rows with the next page appended. A change
+   * of the environment cancels the request and leaves the rows as they were.
+   */
+  private runLoadMore(shown: RowsState): Observable<ExecutionState> {
+    const previous: RowsState = { ...shown, isLoadingMore: false, loadMoreError: undefined };
+    const { continuation } = previous;
+
+    const nextRows$ = defer(() => this.executeRequest(
+      withPage(continuation.xml, continuation.nextPage, continuation.pagingCookie),
+      continuation.entitySetName,
+      continuation.environmentUrl
+    )).pipe(
+      switchMap(response => this.appendPage(previous, response)),
+      catchError(error => {
+        const { message, code } = this.reportRequestError(error);
+        return of<ExecutionState>({ ...previous, loadMoreError: { message, code } });
+      })
+    );
+
+    const environmentChanged$ = this._activeEnvironmentModel.pipe(
+      filter(environment => environment?.url !== continuation.environmentUrl),
+      map((): ExecutionState => previous)
+    );
+
+    return merge(environmentChanged$, nextRows$).pipe(
+      take(1),
+      startWith<ExecutionState>({ ...previous, isLoadingMore: true })
+    );
+  }
+
+  /** Shapes all received rows together, the way one response of that size would be shaped. */
+  private appendPage(previous: RowsState, response: DataverseExecuteXmlResponse): Observable<ExecutionState> {
+    const { continuation } = previous;
+    const page = response?.value || [];
+
+    if (!page.length) {
+      return of<ExecutionState>({ ...previous, continuation: undefined });
     }
 
-    return defer(() => this.processDataWithStrategy(data, environmentUrl)).pipe(
-      // The metadata stream behind a strategy stays open and follows environment changes
-      take(1),
-      throwIfEmpty(() => new Error('The result strategy completed without a result')),
+    const receivedRows = continuation.receivedRows.concat(page);
+
+    return this.processRows(receivedRows, continuation.entityAttributeMap, continuation.primaryEntityName, continuation.environmentUrl).pipe(
       map((result): ExecutionState => {
-        // The strategies swallow their own exceptions and return no rows instead
-        if (!result.rows?.length) {
-          throw new Error(`The result strategy returned no rows for ${data.length} received rows`);
-        }
-        return { status: 'rows', result };
+        // The raw result panel shows one response holding the rows of all pages
+        this.rawDataverseResultSubject.next({ ...response, value: receivedRows });
+
+        return {
+          ...previous,
+          result,
+          continuation: this.buildContinuation(response, continuation.nextPage, { ...continuation, receivedRows })
+        };
       }),
       catchError(error => {
-        console.error('Error processing the query result:', error);
-        return of<ExecutionState>({
-          status: 'processingError',
-          message: `Rows were received (${data.length}) but could not be displayed`
-        });
+        const { message } = this.reportProcessingError(error, page.length);
+        return of<ExecutionState>({ ...previous, loadMoreError: { message } });
       })
     );
   }
 
-  private reportRequestError(error: any): ExecutionState {
+  /** Undefined when there is nothing more to load. */
+  private buildContinuation(
+    response: DataverseExecuteXmlResponse,
+    receivedPage: number | null,
+    query: Omit<QueryContinuation, 'nextPage' | 'pagingCookie'>
+  ): QueryContinuation | undefined {
+    if (receivedPage === null || !response['@Microsoft.Dynamics.CRM.morerecords']) {
+      return undefined;
+    }
+
+    return {
+      ...query,
+      nextPage: receivedPage + 1,
+      pagingCookie: readPagingCookie(response['@Microsoft.Dynamics.CRM.fetchxmlpagingcookie'])
+    };
+  }
+
+  private processRows(
+    data: any[],
+    entityAttributeMap: EntityAttributeMapping,
+    primaryEntityName: string,
+    environmentUrl: string
+  ): Observable<MatTableRawData> {
+    return defer(() => this.processDataWithStrategy(data, entityAttributeMap, primaryEntityName, environmentUrl)).pipe(
+      // The metadata stream behind a strategy stays open and follows environment changes
+      take(1),
+      throwIfEmpty(() => new Error('The result strategy completed without a result')),
+      map(result => {
+        // The strategies swallow their own exceptions and return no rows instead
+        if (!result.rows?.length) {
+          throw new Error(`The result strategy returned no rows for ${data.length} received rows`);
+        }
+        return result;
+      })
+    );
+  }
+
+  private reportProcessingError(error: any, rowCount: number) {
+    console.error('Error processing the query result:', error);
+    return {
+      status: 'processingError' as const,
+      message: `Rows were received (${rowCount}) but could not be displayed`
+    };
+  }
+
+  private reportRequestError(error: any) {
     console.error('Error executing XML request:', error?.message || 'Unknown error');
 
     const dataverseError = error?.error?.error;
@@ -177,7 +339,8 @@ export class XmlExecutorService extends BaseRequestService {
       });
     }
 
-    return { status: 'requestError', message, code: dataverseError?.code };
+    const code: string = dataverseError?.code;
+    return { status: 'requestError' as const, message, code };
   }
 
   private extractQueryOptions(): FetchXmlQueryOptions {
@@ -204,19 +367,7 @@ export class XmlExecutorService extends BaseRequestService {
     } catch (error) { throw error; }
   }
 
-  private sanitizeForTransmission(xml: string): string {
-    return xml
-      .replace(/<!--[\s\S]*?-->/g, '') // Remove comments
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .trim();
-  }
-
-  private executeRequest(xml: string, entityNode: QueryNode, environmentUrl: string): Observable<DataverseExecuteXmlResponse> {
-    if (!xml || !entityNode) {
-      throw new Error('XML and entity information are required. Please ensure you have a valid query with entity information before executing');
-    }
-
-    const entitySetName = entityNode.entitySetName$?.value;
+  private executeRequest(xml: string, entitySetName: string, environmentUrl: string): Observable<DataverseExecuteXmlResponse> {
     if (!entitySetName) {
       throw new Error('Entity name is missing or invalid. Please select a valid entity for your query');
     }
@@ -225,9 +376,14 @@ export class XmlExecutorService extends BaseRequestService {
       throw new Error('No active environment URL found. Please connect to an environment before executing the query');
     }
 
-    const sanitizedXml = this.sanitizeForTransmission(xml);
-    const encodedXml = encodeURIComponent(sanitizedXml);
-    const url = API_ENDPOINTS.execute.getResourceUrl(environmentUrl, entitySetName, encodedXml);
+    const url = API_ENDPOINTS.execute.getResourceUrl(environmentUrl, entitySetName, encodeURIComponent(xml));
+    // measured as sent: the browser escapes some characters that encodeURIComponent leaves as they are
+    const urlLength = new URL(url).href.length;
+
+    if (urlLength > MAX_REQUEST_URL_LENGTH) {
+      throw new Error(`The query is too long to send: the request URL has ${urlLength} characters, Dataverse accepts up to ${MAX_REQUEST_URL_LENGTH}. Shorten the query, for example the list of values of an "in" condition`);
+    }
+
     const headers = this.buildRequestOptions(this.extractQueryOptions());
 
     return this.httpClient.get<DataverseExecuteXmlResponse>(url, headers);
@@ -251,10 +407,12 @@ export class XmlExecutorService extends BaseRequestService {
     return { headers };
   }
 
-  private processDataWithStrategy(data: any[], environmentUrl: string): Observable<MatTableRawData> {
-    const entityAttributeMap = this.nodeTreeService.getEntityAttributeMap();
-    const primaryEntityName = this.nodeTreeService.getPrimaryEntityName();
-
+  private processDataWithStrategy(
+    data: any[],
+    entityAttributeMap: EntityAttributeMapping,
+    primaryEntityName: string,
+    environmentUrl: string
+  ): Observable<MatTableRawData> {
     if (!entityAttributeMap || !primaryEntityName) {
       throw new Error('The query tree has no primary entity to map the result columns to');
     }

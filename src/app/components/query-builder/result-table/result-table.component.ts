@@ -1,6 +1,8 @@
-import { Component, EventEmitter, OnInit, Output, OnDestroy, ViewEncapsulation, ChangeDetectionStrategy, NO_ERRORS_SCHEMA, CUSTOM_ELEMENTS_SCHEMA, ChangeDetectorRef, Inject } from '@angular/core';
+import { Component, EventEmitter, OnInit, Output, OnDestroy, ViewEncapsulation, ChangeDetectionStrategy, NO_ERRORS_SCHEMA, CUSTOM_ELEMENTS_SCHEMA, ChangeDetectorRef, Inject, ElementRef, ViewChild } from '@angular/core';
 import {  Subscription, takeUntil, tap, Subject, BehaviorSubject } from 'rxjs';
-import { ExecutionState, MatTableRawData, XmlExecutorService } from '../services/xml-executor.service';
+import { ExecutionState, MatTableRawData, QueryContinuation, XmlExecutorService } from '../services/xml-executor.service';
+import { DEFAULT_PAGE_SIZE_OPTIONS, FALLBACK_PAGE_SIZE, PageSizePreference, fitPageSize } from './page-size';
+import { MatButtonModule } from '@angular/material/button';
 import { NodeTreeService } from '../services/node-tree.service';
 import { QueryNode } from '../models/query-node';
 import { CommonModule } from '@angular/common';
@@ -27,6 +29,7 @@ import { AngularSplitModule } from 'angular-split';
         MatProgressBarModule,
         MatIconModule,
         MatPaginatorModule,
+        MatButtonModule,
         RawResultPanelComponent,
         AngularSplitModule,
     ],
@@ -50,8 +53,8 @@ export class ResultTableComponent implements OnInit, OnDestroy {
   
   // Pagination properties
   paginatedData: any[] = [];
-  pageSize = 50;
-  pageSizeOptions: number[] = [10, 25, 50, 100];
+  pageSize = FALLBACK_PAGE_SIZE;
+  pageSizeOptions: number[] = [...DEFAULT_PAGE_SIZE_OPTIONS];
   pageIndex = 0;
   totalRows = 0;
 
@@ -67,6 +70,13 @@ export class ResultTableComponent implements OnInit, OnDestroy {
   hasError = false;
   errorMessage = '';
 
+  // Set while Dataverse has more rows than the table holds
+  continuation: QueryContinuation | null = null;
+  isLoadingMore = false;
+  private executionId: number | undefined;
+
+  @ViewChild('tableScroll') private tableScroll: ElementRef<HTMLElement>;
+
   // Track current environment URL
   private currentEnvironmentUrl: string = '';
   private environmentSubscription: Subscription;
@@ -79,6 +89,7 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     private nodeTreeService: NodeTreeService,
     private cdr: ChangeDetectorRef,
     private externalLinkService: ExternalLinkService,
+    private pageSizePreference: PageSizePreference,
     @Inject(ACTIVE_ENVIRONMENT_MODEL) private activeEnvironmentModel: BehaviorSubject<EnvironmentModel>
   ) {
     this.destroy$ = new Subject<void>();
@@ -125,6 +136,8 @@ export class ResultTableComponent implements OnInit, OnDestroy {
             this.refreshDataSource();
           }
         }
+        // whether more rows can be loaded depends on the active environment
+        this.cdr.markForCheck();
       });
   }
 
@@ -157,8 +170,20 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     this.errorMessage = state.status === 'requestError' || state.status === 'processingError' ? state.message : '';
 
     if (state.status === 'rows') {
-      this.resultData = state.result;
-      this.processResultData();
+      this.continuation = state.continuation ?? null;
+      this.isLoadingMore = !!state.isLoadingMore;
+      if (state.loadMoreError) {
+        this.hasError = true;
+        this.errorMessage = state.loadMoreError.message;
+      }
+
+      // further states of the same execution keep the page the user is on
+      const isSameExecution = state.executionId !== undefined && state.executionId === this.executionId;
+      if (!isSameExecution || state.result !== this.resultData) {
+        this.executionId = state.executionId;
+        this.resultData = state.result;
+        this.processResultData(isSameExecution);
+      }
     } else {
       this.clearResult();
       if (state.status === 'idle') {
@@ -171,7 +196,17 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     this.cdr.markForCheck();
   }
 
+  get canLoadMore(): boolean {
+    return this.activeEnvironmentModel.value?.url === this.continuation?.environmentUrl;
+  }
+
+  loadMore() {
+    this.xmlExecutor.loadMore();
+  }
+
   private clearResult() {
+    this.continuation = null;
+    this.isLoadingMore = false;
     this.resultData = null;
     this.selectedRow = null;
     this.selectedOverflowCell = null;
@@ -184,7 +219,7 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     this.formattedDataverseResult.next(null);
   }
 
-  private processResultData() {
+  private processResultData(keepPage = false) {
     if (!this.resultData) {
       this.displayedColumns = ['No data'];
       this.dataSource = [];
@@ -226,9 +261,13 @@ export class ResultTableComponent implements OnInit, OnDestroy {
       this.displayedColumns = ['No.', ...headerColumns];
     }
 
+    if (!keepPage && this.pageSizePreference.userPageSize) {
+      this.setPageSize(this.pageSizePreference.userPageSize);
+    }
+
     // Set the data source based on the toggle state
-    this.refreshDataSource();
-    
+    this.refreshDataSource(keepPage);
+
     // Force change detection immediately
     this.cdr.markForCheck();
     this.cdr.detectChanges();
@@ -237,7 +276,34 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     setTimeout(() => {
       this.cdr.markForCheck();
       this.cdr.detectChanges();
+      // the table is on screen now and can be measured
+      if (!keepPage) {
+        this.fitPageSizeToTable();
+      }
     }, 0);
+  }
+
+  private fitPageSizeToTable() {
+    const container = this.tableScroll?.nativeElement;
+    const row = container?.querySelector('tr.mat-mdc-row');
+
+    if (!row || this.pageSizePreference.userPageSize) {
+      return;
+    }
+
+    const headerHeight = container.querySelector('tr.mat-mdc-header-row')?.getBoundingClientRect().height ?? 0;
+    // clientHeight leaves out a horizontal scrollbar; 0 means the panel is not shown
+    const rowsAreaHeight = container.clientHeight ? Math.max(1, container.clientHeight - headerHeight) : 0;
+
+    this.setPageSize(fitPageSize(rowsAreaHeight, row.getBoundingClientRect().height));
+    this.updatePaginatedData();
+    this.cdr.detectChanges();
+  }
+
+  private setPageSize(pageSize: number) {
+    this.pageSize = pageSize;
+    // mat-paginator shows an empty selection for a size that is not among the options
+    this.pageSizeOptions = [...new Set([...DEFAULT_PAGE_SIZE_OPTIONS, pageSize])].sort((a, b) => a - b);
   }
 
   private getEntityNode(): QueryNode {
@@ -474,7 +540,7 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     }
   }
 
-  private refreshDataSource() {
+  private refreshDataSource(keepPage = false) {
     if (!this.resultData || !this.resultData.rows) {
       this.dataSource = [];
       this.paginatedData = [];
@@ -534,8 +600,10 @@ export class ResultTableComponent implements OnInit, OnDestroy {
       // Update total rows
       this.totalRows = this.dataSource.length;
       
-      // Reset to first page when data source changes
-      this.pageIndex = 0;
+      // Reset to first page when data source changes, unless rows were only appended
+      if (!keepPage) {
+        this.pageIndex = 0;
+      }
       
       // Update paginated view
       this.updatePaginatedData();
@@ -552,6 +620,10 @@ export class ResultTableComponent implements OnInit, OnDestroy {
 
   // Handle page events from the paginator
   onPageChange(event: PageEvent) {
+    // a size picked by the user wins over the fitted one
+    if (event.pageSize !== this.pageSize) {
+      this.pageSizePreference.userPageSize = event.pageSize;
+    }
     this.pageSize = event.pageSize;
     this.pageIndex = event.pageIndex;
     
