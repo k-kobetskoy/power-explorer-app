@@ -5,7 +5,8 @@ import { AppEvents } from 'src/app/services/event-bus/app-events';
 import { EventBusService } from 'src/app/services/event-bus/event-bus.service';
 import { QueryNode } from '../models/query-node';
 import { QueryNodeData } from '../models/constants/query-node-data';
-import { ValueAttributeData } from '../models/constants/attribute-data';
+import { ConditionAttributeData, ValueAttributeData } from '../models/constants/attribute-data';
+import { FilterStaticData } from '../models/constants/ui/filter-static-data';
 import { NodeFactoryService } from './attribute-services/node-factory.service';
 import { VALID_RESULT, ValidationResult, ValidationService } from './validation.service';
 import { AttributeNames } from '../models/constants/attribute-names';
@@ -118,6 +119,10 @@ export class NodeTreeService {
     newNode.level = parentNode.level + 1;
     newNode.parent = parentNode;
 
+    // The default operator belongs to the new node; selecting a node never writes to it
+    if (newNodeName === QueryNodeData.Condition.NodeName) {
+      newNode.setAttribute(ConditionAttributeData.Operator, FilterStaticData.DefaultOperator);
+    }
 
     if (parent) {
       this.expandNode(parentNode);

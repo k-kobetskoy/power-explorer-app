@@ -88,9 +88,6 @@ export class PicklistFormComponent extends OperatorValueBaseFormComponent {
     super.initializeForm();
     this.setupPicklistOptions();
     this.isLoading$ = this.picklistService.getPicklistOptionsIsLoading$;
-
-    this.valueFormControl.valueChanges.subscribe(value => {
-    });
   }
 
   private setupPicklistOptions() {

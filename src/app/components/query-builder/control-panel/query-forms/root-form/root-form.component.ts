@@ -1,4 +1,4 @@
-import { Component, ChangeDetectionStrategy, OnInit, OnDestroy, OnChanges, SimpleChanges, Input } from '@angular/core';
+import { Component, ChangeDetectionStrategy, OnDestroy, OnChanges, SimpleChanges, Input } from '@angular/core';
 import { BaseFormComponent } from '../base-form.component';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { Subject, takeUntil, debounceTime, Observable, shareReplay, startWith, filter } from 'rxjs';
@@ -31,7 +31,7 @@ import { MatExpansionModule } from '@angular/material/expansion';
     styleUrls: ['./root-form.component.css'],
     changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class RootFormComponent extends BaseFormComponent implements OnInit, OnDestroy, OnChanges {
+export class RootFormComponent extends BaseFormComponent implements OnDestroy, OnChanges {
     private destroy$ = new Subject<void>();
 
     constructor() { super(); }
@@ -47,10 +47,6 @@ export class RootFormComponent extends BaseFormComponent implements OnInit, OnDe
     pageFormControl = new FormControl('');
     pagingCookieFormControl = new FormControl('');
     dataSourceFormControl = new FormControl('');
-
-    ngOnInit() {
-        this.initializeForm();
-    }
 
     ngOnChanges(changes: SimpleChanges) {
         if (changes['selectedNode'] && this.selectedNode) {
@@ -77,41 +73,15 @@ export class RootFormComponent extends BaseFormComponent implements OnInit, OnDe
         const pagingCookieAttribute = this.getAttribute(AttributeData.Root.PagingCookie, this.selectedNode);
         const dataSourceAttribute = this.getAttribute(AttributeData.Root.DataSource, this.selectedNode);
 
-        if (topAttribute) {
-            this.topFormControl.setValue(topAttribute.value$.value, { emitEvent: false });
-        }
-
-        if (distinctAttribute) {
-            this.distinctFormControl.setValue(distinctAttribute.value$.value === 'true', { emitEvent: false });
-        }
-
-        if (aggregateAttribute) {
-            this.aggregateFormControl.setValue(aggregateAttribute.value$.value === 'true', { emitEvent: false });
-        }
-
-        if (totalRecordsCountAttribute) {
-            this.totalRecordsCountFormControl.setValue(totalRecordsCountAttribute.value$.value === 'true', { emitEvent: false });
-        }
-
-        if (lateMaterializeAttribute) {
-            this.lateMaterializeFormControl.setValue(lateMaterializeAttribute.value$.value === 'true', { emitEvent: false });
-        }
-
-        if (recordsPerPageAttribute) {
-            this.recordsPerPageFormControl.setValue(recordsPerPageAttribute.value$.value, { emitEvent: false });
-        }
-
-        if (pageAttribute) {
-            this.pageFormControl.setValue(pageAttribute.value$.value, { emitEvent: false });
-        }
-
-        if (pagingCookieAttribute) {
-            this.pagingCookieFormControl.setValue(pagingCookieAttribute.value$.value, { emitEvent: false });
-        }
-
-        if (dataSourceAttribute) {
-            this.dataSourceFormControl.setValue(dataSourceAttribute.value$.value, { emitEvent: false });
-        }
+        this.topFormControl.reset(topAttribute?.value$.value ?? '', { emitEvent: false });
+        this.distinctFormControl.reset(distinctAttribute?.value$.value === 'true', { emitEvent: false });
+        this.aggregateFormControl.reset(aggregateAttribute?.value$.value === 'true', { emitEvent: false });
+        this.totalRecordsCountFormControl.reset(totalRecordsCountAttribute?.value$.value === 'true', { emitEvent: false });
+        this.lateMaterializeFormControl.reset(lateMaterializeAttribute?.value$.value === 'true', { emitEvent: false });
+        this.recordsPerPageFormControl.reset(recordsPerPageAttribute?.value$.value ?? '', { emitEvent: false });
+        this.pageFormControl.reset(pageAttribute?.value$.value ?? '', { emitEvent: false });
+        this.pagingCookieFormControl.reset(pagingCookieAttribute?.value$.value ?? '', { emitEvent: false });
+        this.dataSourceFormControl.reset(dataSourceAttribute?.value$.value ?? '', { emitEvent: false });
     }
 
     private setupFormToModelBindings() {

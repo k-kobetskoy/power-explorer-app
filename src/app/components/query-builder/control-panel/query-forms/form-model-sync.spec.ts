@@ -1,3 +1,4 @@
+import { SimpleChange } from '@angular/core';
 import { TestBed, fakeAsync, flush, tick } from '@angular/core/testing';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { AttributeData } from '../../models/constants/attribute-data';
@@ -23,7 +24,7 @@ describe('Query forms and the attributes of their node', () => {
     const valueNode = nodeTree.addValueNode(condition);
     const form = TestBed.createComponent(ValueFormComponent).componentInstance;
     form.selectedNode = valueNode;
-    form.ngOnInit();
+    form.ngOnChanges({ selectedNode: new SimpleChange(undefined, valueNode, true) });
 
     form.valueFormControl.setValue('a');
 
@@ -37,7 +38,7 @@ describe('Query forms and the attributes of their node', () => {
     const node = nodeTree.addNode(QueryNodeData.Attribute.NodeName, entity);
     const form = TestBed.createComponent(AttributeFormComponent).componentInstance;
     form.selectedNode = node;
-    form.ngOnInit();
+    form.ngOnChanges({ selectedNode: new SimpleChange(undefined, node, true) });
     const name = form.attributeForm.get('name');
     const alias = form.attributeForm.get('alias');
 
