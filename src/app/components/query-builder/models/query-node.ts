@@ -97,19 +97,6 @@ export class QueryNode {
         }
     }
 
-    getParentEntityName(parentEntityNode: QueryNode): BehaviorSubject<string> {
-        if (!parentEntityNode) {
-            return new BehaviorSubject<string>('');
-        }
-
-        const nameAttribute = parentEntityNode.attributes$.value.find(a => a.editorName === 'name');
-        if (!nameAttribute) {
-            return new BehaviorSubject<string>('');
-        }
-
-        return nameAttribute.value$;
-    }
-
     setAttribute(attributeData: IAttributeData, value: string, atributeModel: AttributeModel = null): void {
         try {
             const attribute = this.findAttribute(attributeData.EditorName);

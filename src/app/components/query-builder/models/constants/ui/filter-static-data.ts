@@ -4,6 +4,19 @@ export class FilterStaticData {
     /** Operator of a new condition; every operator list below contains it. */
     static readonly DefaultOperator = 'eq';
 
+    /** Operators of the lists below that take no value. */
+    static readonly ValuelessOperators: readonly string[] = [
+        'null', 'not-null',
+        'yesterday', 'today', 'tomorrow',
+        'last-seven-days', 'next-seven-days',
+        'last-week', 'this-week', 'next-week',
+        'last-month', 'this-month', 'next-month',
+        'last-year', 'this-year', 'next-year',
+        'last-fiscal-period', 'this-fiscal-period', 'next-fiscal-period',
+        'last-fiscal-year', 'this-fiscal-year', 'next-fiscal-year',
+        'eq-userid', 'ne-userid', 'eq-businessid', 'ne-businessid',
+    ];
+
     static readonly FilterTypes: UiInputProperty[] =
         [
             { name: 'And', value: 'and' },

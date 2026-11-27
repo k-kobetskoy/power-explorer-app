@@ -1,16 +1,15 @@
 import { Component, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy, Input, ViewEncapsulation } from '@angular/core';
 import { BaseFormComponent } from '../base-form.component';
 import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
-import { Observable, Subject, combineLatest, of, shareReplay, tap, BehaviorSubject } from 'rxjs';
-import { distinctUntilChanged, map, startWith, switchMap, takeUntil, filter, catchError, take } from 'rxjs/operators';
+import { Observable, Subject, combineLatest, shareReplay, BehaviorSubject } from 'rxjs';
+import { map, startWith, takeUntil, filter, take } from 'rxjs/operators';
 import { EntityModel } from 'src/app/models/incoming/environment/entity-model';
 import { AttributeModel } from 'src/app/models/incoming/attrubute/attribute-model';
 import { EntityEntityService } from '../../../services/entity-services/entity-entity.service';
 import { AttributeEntityService } from '../../../services/entity-services/attribute-entity.service';
 import { LinkTypeOptions } from '../../../models/constants/ui/link-type-options';
 import { QueryNode } from '../../../models/query-node';
-import { AttributeData } from '../../../models/constants/attribute-data';
-import { AttributeNames } from '../../../models/constants/attribute-names';
+import { AttributeData, IAttributeData } from '../../../models/constants/attribute-data';
 import { LinkEntityService } from '../../../services/entity-services/link-entity.service';
 import { LinkEntityResponseModel, RelationshipModel, RelationshipType } from 'src/app/models/incoming/link/link-entity-response-model';
 import { CommonModule } from '@angular/common';
@@ -27,6 +26,9 @@ import { MatButtonModule } from '@angular/material/button';
 import { NodeTreeService } from 'src/app/components/query-builder/services/node-tree.service';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { NodeActionsComponent } from '../node-actions/node-actions.component';
+import { bindControlToAttribute } from '../helpers/attribute-binding';
+import { MetadataSource, entityMetadata$, parentEntityMetadata$ } from '../helpers/entity-metadata';
+import { SUGGESTION_LIMIT, suggestions$ } from '../helpers/suggestions';
 // Interface for relation object to improve type safety
 interface RelationObject extends RelationshipModel { }
 
@@ -84,7 +86,6 @@ export class LinkEntityFormComponent extends BaseFormComponent implements OnDest
 
   linkEntities$: Observable<LinkEntityResponseModel>;
   fetchAllEntities$: Observable<boolean>;
-  parentEntityLogicalName$: Observable<string>;
 
   isLoadingToAttributes$ : BehaviorSubject<boolean>;
   isLoadingFromAttributes$ : BehaviorSubject<boolean>;
@@ -129,7 +130,7 @@ export class LinkEntityFormComponent extends BaseFormComponent implements OnDest
     this.setupFromAttributeAutocomplete();
     this.setupToAttributeAutocomplete();
 
-    this.setupFormToModelBindings();
+    this.setupBindings();
   }
 
   removeNode() {
@@ -179,50 +180,21 @@ export class LinkEntityFormComponent extends BaseFormComponent implements OnDest
   setupLinkEntitiesObservable() {
     const parentEntity = this.selectedNode.getParentEntity();
 
-    if (!parentEntity) {
-      this.linkEntities$ = of({ OneToManyRelationships: [], ManyToOneRelationships: [] });
-      this.parentEntityLogicalName$ = of('');
-
-      if (!this.fetchAllEntitiesFormControl.value) {
-        this.fetchAllEntitiesFormControl.setValue(true, { emitEvent: true });
-      }
-      return;
-    }
-
+    // The mode is chosen once, when the form gets its node; the list keeps following the parent
     let isParentValid = false;
-    parentEntity.validationResult$.pipe(take(1)).subscribe(result => {
+    parentEntity?.validationResult$.pipe(take(1)).subscribe(result => {
       isParentValid = result.isValid;
     });
 
-    if (!isParentValid) {
-      this.linkEntities$ = of({ OneToManyRelationships: [], ManyToOneRelationships: [] });
-      this.parentEntityLogicalName$ = of('');
-
-      if (!this.fetchAllEntitiesFormControl.value) {
-        this.fetchAllEntitiesFormControl.setValue(true, { emitEvent: true });
-      }
-      return;
+    if (!isParentValid && !this.fetchAllEntitiesFormControl.value) {
+      this.fetchAllEntitiesFormControl.setValue(true, { emitEvent: true });
     }
 
-    this.parentEntityLogicalName$ = parentEntity.attributes$.pipe(
-      take(1),
-      map(attributes => {
-        const entityNameAttr = attributes.find(attr => attr.editorName === AttributeNames.entityName);
-        const name = entityNameAttr?.value$.value as string || '';
-        return name;
-      })
-    );
-
-    this.linkEntities$ = this.parentEntityLogicalName$.pipe(
-      switchMap(entityName => {
-        if (!entityName) {
-          return of({ OneToManyRelationships: [], ManyToOneRelationships: [] });
-        }
-        return this.linkEntityService.getLinkEntities(entityName, true).pipe(
-          takeUntil(this.destroy$)
-        );
-      })
-    );
+    this.linkEntities$ = parentEntityMetadata$<LinkEntityResponseModel>(parentEntity, {
+      load: entityName => this.linkEntityService.getLinkEntities(entityName, true),
+      empty: { OneToManyRelationships: [], ManyToOneRelationships: [] },
+      loading$: this.isLoadingLinkEntities$
+    }).pipe(takeUntil(this.destroy$));
   }
 
   private setupLinkEntityAutocomplete() {
@@ -230,105 +202,40 @@ export class LinkEntityFormComponent extends BaseFormComponent implements OnDest
       this.linkEntityFormControl.valueChanges.pipe(startWith(this.linkEntityFormControl.value || '')),
       this.linkEntities$,
     ]).pipe(
-      map(([searchTerm, linkEntities]) => {
-        if (!searchTerm || typeof searchTerm !== 'string') {
-          return linkEntities;
-        }
-
-        const searchTermLower = searchTerm.toLowerCase();
-
-        const filteredOneToMany = linkEntities.OneToManyRelationships
-          .filter(rel =>
-            rel.ReferencingEntityName.toLowerCase().includes(searchTermLower) ||
-            rel.SchemaName.toLowerCase().includes(searchTermLower)
-          );
-
-        const filteredManyToOne = linkEntities.ManyToOneRelationships
-          .filter(rel =>
-            rel.ReferencedEntityName.toLowerCase().includes(searchTermLower) ||
-            rel.SchemaName.toLowerCase().includes(searchTermLower)
-          );
-
-        return {
-          OneToManyRelationships: filteredOneToMany,
-          ManyToOneRelationships: filteredManyToOne
-        };
-      }),
+      map(([searchTerm, linkEntities]) => this.filterRelationships(searchTerm, linkEntities)),
       takeUntil(this.destroy$),
       // The template reads this list in several places
       shareReplay({ bufferSize: 1, refCount: true })
     );
   }
 
-  private setupFormToModelBindings() {
-    this.entityNameFormControl.valueChanges.pipe(
-      filter(() => this.entityNameFormControl.dirty || this.hasEntityName()),
-      takeUntil(this.destroy$)
-    ).subscribe(value => {
-      this.updateAttribute(AttributeData.Link.Entity, this.selectedNode, value);
+  private setupBindings() {
+    bindControlToAttribute(this.entityNameFormControl, this.selectedNode, AttributeData.Link.Entity, this.destroy$, {
+      canWrite: () => this.entityNameFormControl.dirty || this.hasEntityName()
     });
 
+    // Written one way only: the control holds a relationship, the node only the name of its entity
     this.linkEntityFormControl.valueChanges.pipe(
       filter(() => this.linkEntityFormControl.dirty || this.hasEntityName()),
       takeUntil(this.destroy$)
     ).subscribe(value => {
-      if (!value) {
-        this.updateAttribute(AttributeData.Link.Entity, this.selectedNode, '');
-        return;
-      }
-
-      if (typeof value === 'object') {
-        const relation = value as RelationshipModel;
-        let entityName = '';
-
-        if (relation.RelationshipType === RelationshipType.OneToMany) {
-          entityName = relation.ReferencingEntityName;
-        } else if (relation.RelationshipType === RelationshipType.ManyToOne) {
-          entityName = relation.ReferencedEntityName;
-        }
-
-        this.updateAttribute(AttributeData.Link.Entity, this.selectedNode, entityName);
-      } else {
-        this.updateAttribute(AttributeData.Link.Entity, this.selectedNode, String(value));
-      }
+      this.updateAttribute(AttributeData.Link.Entity, this.selectedNode, this.displayEntityName(value));
     });
 
-    this.fromAttributeFormControl.valueChanges.pipe(
-      takeUntil(this.destroy$)
-    ).subscribe(value => {
-      this.updateAttribute(AttributeData.Link.From, this.selectedNode, value);
-    });
+    bindControlToAttribute(this.fromAttributeFormControl, this.selectedNode, AttributeData.Link.From, this.destroy$);
+    bindControlToAttribute(this.toAttributeFormControl, this.selectedNode, AttributeData.Link.To, this.destroy$);
+    bindControlToAttribute(this.linkTypeFormControl, this.selectedNode, AttributeData.Link.Type, this.destroy$);
+    bindControlToAttribute(this.aliasFormControl, this.selectedNode, AttributeData.Link.Alias, this.destroy$);
 
-    this.toAttributeFormControl.valueChanges.pipe(
-      takeUntil(this.destroy$)
-    ).subscribe(value => {
-      this.updateAttribute(AttributeData.Link.To, this.selectedNode, value);
-    });
+    this.bindCheckbox(this.intersectFormControl, AttributeData.Link.Intersect);
+    this.bindCheckbox(this.visibleFormControl, AttributeData.Link.Visible);
+  }
 
-    this.linkTypeFormControl.valueChanges.pipe(
-      takeUntil(this.destroy$)
-    ).subscribe(value => {
-      this.updateAttribute(AttributeData.Link.Type, this.selectedNode, value);
-    });
-
-    this.aliasFormControl.valueChanges.pipe(
-      takeUntil(this.destroy$)
-    ).subscribe(value => {
-      this.updateAttribute(AttributeData.Link.Alias, this.selectedNode, value);
-    });
-
-    this.intersectFormControl.valueChanges.pipe(
-      filter(() => this.intersectFormControl.dirty),
-      takeUntil(this.destroy$)
-    ).subscribe(value => {
-      this.updateAttribute(AttributeData.Link.Intersect, this.selectedNode, value.toString());
-    });
-
-    this.visibleFormControl.valueChanges.pipe(
-      filter(() => this.visibleFormControl.dirty),
-      takeUntil(this.destroy$)
-    ).subscribe(value => {
-      this.updateAttribute(AttributeData.Link.Visible, this.selectedNode, value.toString());
+  private bindCheckbox(control: FormControl<boolean>, attributeData: IAttributeData) {
+    bindControlToAttribute<boolean>(control, this.selectedNode, attributeData, this.destroy$, {
+      fromModel: value => value === 'true',
+      toModel: value => value.toString(),
+      canWrite: () => control.dirty
     });
   }
 
@@ -388,109 +295,49 @@ export class LinkEntityFormComponent extends BaseFormComponent implements OnDest
   }
 
   private setupEntityAutocomplete() {
-    this.filteredEntities$ = combineLatest([
-      this.entityNameFormControl.valueChanges.pipe(startWith(this.entityNameFormControl.value || '')),
-      this.entityService.getEntities(true)
-    ]).pipe(
-      map(([value, entities]) => this.filterEntities(value, entities))
-    );
+    this.filteredEntities$ = suggestions$(this.entityNameFormControl, this.entityService.getEntities(true));
   }
 
   private setupFromAttributeAutocomplete() {
-    const attributes$ = this.selectedNode.attributes$.pipe(
-      filter(attributes => attributes.length > 0),
-      map(attributes => attributes.find(attr => attr.editorName === AttributeNames.linkEntity)),
-      distinctUntilChanged(),
-      takeUntil(this.destroy$),
-      switchMap(entityAttribute => {
-        if (!entityAttribute) { return of([] as AttributeModel[]) };
-        return entityAttribute.validationResult$.pipe(
-          takeUntil(this.destroy$),
-          distinctUntilChanged((prev, curr) => prev.isValid === curr.isValid),
-          switchMap(validationResult => {
-            if (!validationResult) { return of([] as AttributeModel[]) }
-            return entityAttribute.value$.pipe(
-              takeUntil(this.destroy$),
-              distinctUntilChanged(),
-              switchMap(entityName => this.attributeService.getAttributes(entityName, true)),
-              catchError(error => {
-                console.error(`[LinkEntityFormComponent] Error fetching attributes`, error);
-                return of([] as AttributeModel[]);
-              })
-            );
-          })
-        )
-      })
-    );
+    const attributes$ = entityMetadata$(this.selectedNode, this.joinAttributes());
 
-    const fromAttributeInput$ = this.fromAttributeFormControl.valueChanges.pipe(
-      startWith(this.fromAttributeFormControl.value || '')
-    );
-
-    this.filteredFromAttributes$ = combineLatest([
-      fromAttributeInput$,
-      attributes$,
-    ]).pipe(
-      map(([value, attributes]) => this.filterAttributes(value, attributes))
-    );
+    this.filteredFromAttributes$ = suggestions$(this.fromAttributeFormControl, attributes$).pipe(takeUntil(this.destroy$));
   }
 
   private setupToAttributeAutocomplete() {
-    const parentNode = this.selectedNode.getParentEntity();
-    if (!parentNode) {
-      this.filteredToAttributes$ = of([]);
-      return;
-    }
+    const attributes$ = parentEntityMetadata$(this.selectedNode.getParentEntity(), this.joinAttributes());
 
-    const parentAttributes$ = parentNode.validationResult$.pipe(
-      map(result => result.isValid),
-      distinctUntilChanged(),
-      switchMap(isValid => isValid ? this.getAttributesOfEntityNode(parentNode) : of([] as AttributeModel[]))
-    );
-
-    const toAttributeInput$ = this.toAttributeFormControl.valueChanges.pipe(
-      startWith(this.toAttributeFormControl.value || '')
-    );
-
-    this.filteredToAttributes$ = combineLatest([
-      toAttributeInput$,
-      parentAttributes$,
-    ]).pipe(
-      map(([value, attributes]) => this.filterAttributes(value, attributes)),
-      takeUntil(this.destroy$)
-    );
+    this.filteredToAttributes$ = suggestions$(this.toAttributeFormControl, attributes$).pipe(takeUntil(this.destroy$));
   }
 
-  // Columns of the entity named by the node, following changes of the name
-  private getAttributesOfEntityNode(entityNode: QueryNode): Observable<AttributeModel[]> {
-    return entityNode.attributes$.pipe(
-      map(attributes => attributes.find(attr => attr.editorName === AttributeNames.entityName)),
-      distinctUntilChanged(),
-      switchMap(nameAttribute => nameAttribute ? nameAttribute.value$ : of('')),
-      distinctUntilChanged(),
-      switchMap(entityName => !entityName ? of([] as AttributeModel[]) : this.attributeService.getAttributes(entityName, true).pipe(
-        catchError(error => {
-          console.error(`[LinkEntityFormComponent] Error fetching attributes`, error);
-          return of([] as AttributeModel[]);
-        })
-      ))
-    );
+  // Columns usable in `from` and `to`, primary keys included
+  private joinAttributes(): MetadataSource<AttributeModel[]> {
+    return {
+      load: entityName => this.attributeService.getJoinAttributes(entityName),
+      empty: []
+    };
   }
 
-  private filterEntities(value: string, entities: EntityModel[]): EntityModel[] {
-    const filterValue = value?.toLowerCase() || '';
-    return entities.filter(entity =>
-      entity.logicalName.toLowerCase().includes(filterValue) ||
-      entity.displayName.toLowerCase().includes(filterValue)
-    );
-  }
+  // The matching relationships, at most SUGGESTION_LIMIT for both groups together
+  private filterRelationships(search: string | RelationshipModel, linkEntities: LinkEntityResponseModel): LinkEntityResponseModel {
+    // A chosen relationship is not a search text
+    const text = typeof search === 'string' ? search.toLowerCase() : '';
 
-  private filterAttributes(value: string, attributes: AttributeModel[]): AttributeModel[] {
-    const filterValue = value?.toLowerCase() || '';
-    return attributes.filter(attr =>
-      attr.logicalName.toLowerCase().includes(filterValue) ||
-      attr.displayName.toLowerCase().includes(filterValue)
-    );
+    const oneToMany = linkEntities.OneToManyRelationships.filter(relation =>
+      relation.ReferencingEntityName.toLowerCase().includes(text) ||
+      relation.SchemaName.toLowerCase().includes(text));
+
+    const manyToOne = linkEntities.ManyToOneRelationships.filter(relation =>
+      relation.ReferencedEntityName.toLowerCase().includes(text) ||
+      relation.SchemaName.toLowerCase().includes(text));
+
+    // Each group gets half of the limit, plus what the other one leaves free
+    const oneToManyCount = Math.min(oneToMany.length, Math.max(SUGGESTION_LIMIT / 2, SUGGESTION_LIMIT - manyToOne.length));
+
+    return {
+      OneToManyRelationships: oneToMany.slice(0, oneToManyCount),
+      ManyToOneRelationships: manyToOne.slice(0, SUGGESTION_LIMIT - oneToManyCount)
+    };
   }
 
   displayEntityName(relation: RelationshipModel | string | null): string {

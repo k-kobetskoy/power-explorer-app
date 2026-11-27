@@ -1,4 +1,4 @@
-import { Component, EventEmitter, OnInit, Output, OnDestroy, ViewEncapsulation, ChangeDetectionStrategy, NO_ERRORS_SCHEMA, CUSTOM_ELEMENTS_SCHEMA, ChangeDetectorRef, Inject, ElementRef, ViewChild } from '@angular/core';
+import { Component, EventEmitter, OnInit, Output, OnDestroy, ViewEncapsulation, ChangeDetectionStrategy, ChangeDetectorRef, Inject, ElementRef, ViewChild } from '@angular/core';
 import {  Subscription, takeUntil, tap, Subject, BehaviorSubject } from 'rxjs';
 import { ExecutionState, MatTableRawData, QueryContinuation, XmlExecutorService } from '../services/xml-executor.service';
 import { DEFAULT_PAGE_SIZE_OPTIONS, FALLBACK_PAGE_SIZE, PageSizePreference, fitPageSize } from './page-size';
@@ -36,8 +36,7 @@ import { AngularSplitModule } from 'angular-split';
     templateUrl: './result-table.component.html',
     styleUrls: ['./result-table.component.css'],
     encapsulation: ViewEncapsulation.None,
-    changeDetection: ChangeDetectionStrategy.OnPush,
-    schemas: [NO_ERRORS_SCHEMA, CUSTOM_ELEMENTS_SCHEMA]
+    changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class ResultTableComponent implements OnInit, OnDestroy {
   closedPanel = true;

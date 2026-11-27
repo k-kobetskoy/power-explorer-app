@@ -22,7 +22,8 @@ export class NodeActionsComponent {
     private nodeTreeProcessorService: NodeTreeService
   ) {}
 
-  duplicateNode() {
+  // Adds an empty node of the same type, not a copy
+  addSiblingNode() {
     this.nodeTreeProcessorService.addNode(this.selectedNode.nodeName, this.selectedNode.parent);
   }
 

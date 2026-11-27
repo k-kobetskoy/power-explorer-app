@@ -1,20 +1,14 @@
-import { Component, Input, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
-import { FormControl, ReactiveFormsModule } from '@angular/forms';
-import { BehaviorSubject } from 'rxjs';
-import {  takeUntil } from 'rxjs/operators';
-import { OperatorValueBaseFormComponent } from '../../operator-value-base-form.component';
-import { MultiValueNodesService } from '../../../../services/multi-value-nodes.service';
-import { FilterStaticData } from '../../../../models/constants/ui/filter-static-data';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
 import { CommonModule } from '@angular/common';
-import { MatOptionModule } from '@angular/material/core';
-import { MatAutocompleteModule } from '@angular/material/autocomplete';
-import { MatIconModule } from '@angular/material/icon';
+import { ChangeDetectionStrategy, Component, Input, OnChanges } from '@angular/core';
+import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
-import { FormsModule } from '@angular/forms';
-import { NodeActionsComponent } from '../../node-actions/node-actions.component';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
+import { QueryNode } from '../../../../models/query-node';
+import { MultiValueNodesService } from '../../../../services/multi-value-nodes.service';
 
+/** Input for the values of In, Between and the like; each value becomes a value node of the condition. */
 @Component({
     standalone: true,
     imports: [
@@ -22,78 +16,37 @@ import { NodeActionsComponent } from '../../node-actions/node-actions.component'
         ReactiveFormsModule,
         MatFormFieldModule,
         MatInputModule,
-        MatOptionModule,
-        MatAutocompleteModule,
         MatIconModule,
-        MatButtonModule,
-        FormsModule        
-    ],      
+        MatButtonModule
+    ],
     selector: 'app-multi-value-form',
     templateUrl: './multi-value-form.component.html',
     styleUrls: ['./multi-value-form.component.css'],
     changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class MultiValueFormComponent extends OperatorValueBaseFormComponent implements OnDestroy {
-    override multiValueControl = new FormControl('');
-    operatorType$ = new BehaviorSubject<string>('');
+export class MultiValueFormComponent implements OnChanges {
+    @Input() selectedNode: QueryNode;
 
-    @Input() hideOperator = false;
-    
-    filterOperators = FilterStaticData.FilterStringOperators;
+    multiValueControl = new FormControl('');
 
-    constructor(private multiValueNodesSvc: MultiValueNodesService) {
-        super(multiValueNodesSvc);
+    constructor(private multiValueNodesService: MultiValueNodesService) { }
+
+    // The form is reused: text typed for the previous node must not stay
+    ngOnChanges() {
+        this.multiValueControl.reset('', { emitEvent: false });
     }
 
-    protected override initializeForm() {
-        super.initializeForm();
-
-        this.setupMultiValueInput();
+    onMultiValueBlur(): void {
+        this.processMultiValues();
     }
 
-    private setupMultiValueInput() {
-        this.operatorFormControl.valueChanges
-            .pipe(takeUntil(this.destroy$))
-            .subscribe(value => {
-                if (value) {
-                    this.operatorType$.next(value);
-
-                    if (this.isMultiValueOperator(value)) {
-                        this.multiValueControl.setValue('', { emitEvent: false });
-                        this.handleMultiValueOperator();
-                    }
-                }
-            });
-    }
-
-    override onMultiValueBlur(): void {
-        if (this.isMultiValueOperator(this.operatorFormControl.value)) {
-            this.processMultiValues();
-        }
-    }
-
-    override onMultiValueEnter(event: Event): void {
+    onMultiValueEnter(event: Event): void {
         event.preventDefault();
-        if (this.isMultiValueOperator(this.operatorFormControl.value)) {
-            this.processMultiValues();
-        }
+        this.processMultiValues();
     }
 
-    override processMultiValues(): void {
-        this.multiValueNodesSvc.processMultiValues(this.selectedNode, this.multiValueControl.value);
+    private processMultiValues(): void {
+        this.multiValueNodesService.processMultiValues(this.selectedNode, this.multiValueControl.value);
         this.multiValueControl.setValue('', { emitEvent: false });
     }
-
-    protected override handleMultiValueOperator() {
-        super.handleMultiValueOperator();
-    }
-
-    protected override handleMultiValueInput(inputValue: string) {
-        // No longer automatically process inputs - wait for blur/Enter
-    }
-
-    override ngOnDestroy() {
-        this.destroy$.next();
-        this.destroy$.complete();
-    }
-} 
+}

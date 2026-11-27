@@ -1,16 +1,4 @@
-  <!-- Only show the operator dropdown when not embedded in another form -->
-  <mat-form-field class="form-field" *ngIf="!hideOperator">
-    <mat-label>Operator</mat-label>
-    <mat-select [formControl]="operatorFormControl">
-      <mat-option *ngFor="let option of filterOperators" [value]="option.value">
-        <div class="option-content">
-          <span>{{option.name}}</span>
-        </div>
-      </mat-option>
-    </mat-select>
-  </mat-form-field>
-
-  <mat-form-field class="form-field">
+<mat-form-field class="form-field">
     <mat-label>Values</mat-label>
     <input matInput
            type="text"

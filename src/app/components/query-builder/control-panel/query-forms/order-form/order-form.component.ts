@@ -1,12 +1,11 @@
 import { Component, Input, OnChanges, OnDestroy, SimpleChanges, ChangeDetectionStrategy } from '@angular/core';
 import { BaseFormComponent } from '../base-form.component';
 import { FormControl, FormsModule, ReactiveFormsModule    } from '@angular/forms';
-import { BehaviorSubject, Observable, Subject, combineLatest, of } from 'rxjs';
-import { distinctUntilChanged, map, startWith, switchMap, takeUntil, filter, take, catchError, shareReplay } from 'rxjs/operators';
+import { BehaviorSubject, Observable, Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 import { AttributeModel } from 'src/app/models/incoming/attrubute/attribute-model';
 import { AttributeEntityService } from '../../../services/entity-services/attribute-entity.service';
 import { QueryNode } from '../../../models/query-node';
-import { AttributeNames } from '../../../models/constants/attribute-names';
 import { AttributeData } from '../../../models/constants/attribute-data';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { CommonModule } from '@angular/common';
@@ -20,6 +19,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { NodeTreeService } from 'src/app/components/query-builder/services/node-tree.service';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { NodeActionsComponent } from '../node-actions/node-actions.component';
+import { bindControlToAttribute } from '../helpers/attribute-binding';
+import { parentEntityMetadata$ } from '../helpers/entity-metadata';
+import { suggestions$ } from '../helpers/suggestions';
 
 @Component({
   standalone: true,
@@ -51,8 +53,6 @@ export class OrderFormComponent extends BaseFormComponent implements OnDestroy, 
   attributeFormControl = new FormControl('');
   descendingFormControl = new FormControl(false);
 
-  parentEntityAttributes$: Observable<AttributeModel[]>;
-
   @Input() selectedNode: QueryNode;
 
   constructor(private attributeService: AttributeEntityService,
@@ -71,66 +71,22 @@ export class OrderFormComponent extends BaseFormComponent implements OnDestroy, 
   private initializeForm() {
     this.setupInitialValues();
 
-    this.setupParentEntityAttributesObservable();
-
     this.setupAttributeAutocomplete();
 
-    this.setupInputsToModelsBindings();
+    this.setupBindings();
   }
 
   removeNode() {
     this.nodeTreeService.removeNode(this.selectedNode);
   }
 
-  setupInputsToModelsBindings() {
-    this.attributeFormControl.valueChanges.pipe(takeUntil(this.destroy$)).subscribe(value => {
-      this.updateAttribute(AttributeData.Order.Attribute, this.selectedNode, value);
+  private setupBindings() {
+    bindControlToAttribute(this.attributeFormControl, this.selectedNode, AttributeData.Order.Attribute, this.destroy$);
+
+    bindControlToAttribute<boolean>(this.descendingFormControl, this.selectedNode, AttributeData.Order.Desc, this.destroy$, {
+      fromModel: value => value === 'true',
+      toModel: value => value.toString()
     });
-
-    this.descendingFormControl.valueChanges.pipe(takeUntil(this.destroy$)).subscribe(value => {
-      this.updateAttribute(AttributeData.Order.Desc, this.selectedNode, value.toString());
-    });
-  }
-
-  setupParentEntityAttributesObservable() {
-    const parentEntity = this.selectedNode.getParentEntity();
-    
-    if (!parentEntity) {
-      this.parentEntityAttributes$ = of([]);
-      return;
-    }
-
-    this.parentEntityAttributes$ = parentEntity.validationResult$.pipe(
-      take(1),
-      switchMap(validationResult => {
-        if (!validationResult.isValid) {
-          console.warn('[OrderFormComponent] Parent entity validation failed');
-          return of([]);
-        }
-        return parentEntity.attributes$.pipe(
-          map(attributes => attributes.find(attr => attr.editorName === AttributeNames.entityName)),
-          filter(entityAttribute => !!entityAttribute),
-          switchMap(entityAttribute => {
-            return entityAttribute.value$.pipe(
-              distinctUntilChanged(),
-              filter(entityName => !!entityName),
-              switchMap(entityName => {
-                return this.attributeService.getAttributes(entityName);
-              }),
-              catchError(error => {
-                console.error(`[OrderFormComponent] Error fetching attributes`, error);
-                return of([]);
-              })
-            );
-          }),
-          catchError(error => {
-            console.error(`[OrderFormComponent] Error in entity attributes pipe`, error);
-            return of([]);
-          }),
-          shareReplay(1)
-        );
-      })
-    );     
   }
 
   private setupInitialValues() {
@@ -152,34 +108,13 @@ export class OrderFormComponent extends BaseFormComponent implements OnDestroy, 
   }
 
   private setupAttributeAutocomplete() {
-    // First ensure parentEntityAttributes$ has a default empty state
-    this.parentEntityAttributes$ = this.parentEntityAttributes$ || of([]);
-    
-    // Create the filtered attributes observable with better handling of null/undefined values
-    this.filteredAttributes$ = combineLatest([
-      this.attributeFormControl.valueChanges.pipe(
-        startWith(this.attributeFormControl.value || ''),
-        map(value => value || '') // Ensure we always have a string
-      ),
-      this.parentEntityAttributes$.pipe(
-        startWith([]) // Start with empty array to ensure combineLatest emits right away
-      )
-    ]).pipe(
-      map(([value, attributes]) => this.filterAttributes(value, attributes || [])),
-      shareReplay(1) // Share the result to prevent multiple subscriptions from causing multiple API calls
-    );
-  }
+    const attributes$ = parentEntityMetadata$<AttributeModel[]>(this.selectedNode.getParentEntity(), {
+      load: entityName => this.attributeService.getAttributes(entityName, true),
+      empty: [],
+      loading$: this.isLoadingAttributes$
+    });
 
-  private filterAttributes(value: string, attributes: AttributeModel[]): AttributeModel[] {
-    if (!attributes || attributes.length === 0) {
-      return [];
-    }
-    
-    const filterValue = (value || '').toLowerCase();
-    return attributes.filter(attr =>
-      attr.logicalName.toLowerCase().includes(filterValue) ||
-      attr.displayName.toLowerCase().includes(filterValue)
-    );
+    this.filteredAttributes$ = suggestions$(this.attributeFormControl, attributes$).pipe(takeUntil(this.destroy$));
   }
 
   ngOnDestroy() {
