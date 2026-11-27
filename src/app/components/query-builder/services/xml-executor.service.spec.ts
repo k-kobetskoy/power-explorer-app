@@ -74,7 +74,26 @@ describe('XmlExecutorService execution pipeline', () => {
     expect(states.map(s => s.status)).toEqual(['idle', 'loading', 'loading', 'empty']);
   });
 
-  for (const [name, map] of [['all attributes', allAttributes], ['defined attributes', definedAttributes]] as const) {
+  const joinDefinedAttributes: EntityAttributeMap = {
+    ...definedAttributes,
+    contact: { entityAlias: 'c', attributeData: [{ attributeLogicalName: 'name', alias: null }], isPrimaryEntity: false }
+  };
+  const joinAllAttributes: EntityAttributeMap = {
+    ...allAttributes,
+    contact: { entityAlias: 'c', attributeData: [], isPrimaryEntity: false }
+  };
+  // an attribute with an alias but no name makes the service load all attributes of the entity
+  const aliasOnlyAttribute: EntityAttributeMap = {
+    account: { entityAlias: null, attributeData: [{ attributeLogicalName: null, alias: 'x' }], isPrimaryEntity: true }
+  };
+
+  for (const [name, map] of [
+    ['all attributes', allAttributes],
+    ['defined attributes', definedAttributes],
+    ['two entities, defined attributes', joinDefinedAttributes],
+    ['two entities, all attributes', joinAllAttributes],
+    ['attribute with an alias only', aliasOnlyAttribute]
+  ] as const) {
     it(`sends nothing when the environment changes after a completed execution (${name})`, async () => {
       entityMap.and.returnValue(map);
       service.execute(XML, entityNode);
