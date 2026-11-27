@@ -210,8 +210,12 @@ if (!gotTheLock) {
       return { action: 'deny' };
     });
 
-    // Initialize authentication handler
-    authHandler = new AuthHandler(mainWindow);
+    // Initialize authentication handler once; a re-created window reuses it
+    if (authHandler) {
+      authHandler.setMainWindow(mainWindow);
+    } else {
+      authHandler = new AuthHandler(mainWindow);
+    }
 
     mainWindow.on('closed', function () {
       mainWindow = null;

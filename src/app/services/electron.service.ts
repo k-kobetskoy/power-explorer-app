@@ -11,8 +11,9 @@ interface AuthResponse extends GenericResponse {
   account?: AccountInfo;
 }
 
-interface TokenResponse extends GenericResponse {
+export interface TokenResponse extends GenericResponse {
   accessToken?: string;
+  loginRequired?: boolean;
 }
 
 interface EnvironmentsResponse extends GenericResponse {
@@ -106,16 +107,6 @@ export class ElectronService {
   }
 
   /**
-   * Get the platform (win32, darwin, linux)
-   */
-  get platform(): string | undefined {
-    if (this.isElectronApp && this.electron) {
-      return this.electron.platform;
-    }
-    return undefined;
-  }
-
-  /**
    * Open a URL in the user's default browser
    */
   openExternal(url: string): Promise<boolean> {
@@ -125,19 +116,6 @@ export class ElectronService {
       // Fallback for browser environment
       window.open(url, '_blank');
       return Promise.resolve(true);
-    }
-  }
-
-  /**
-   * Show an error dialog
-   */
-  showError(title: string, message: string): void {
-    if (this.isElectronApp && this.electron) {
-      this.electron.showError(title, message);
-    } else {
-      // Fallback for browser environment
-      console.error(`${title}: ${message}`);
-      alert(`${title}\n${message}`);
     }
   }
 
@@ -168,25 +146,7 @@ export class ElectronService {
    */
   get auth(): ElectronAuthAPI {
     if (this.isElectronApp && this.electron) {
-      // Debug: Log available methods in electron.auth
-      // Filter out any non-implemented methods like setEnvironmentUrl
-      
-      // Add getActiveAccount method if it's not available in the electron API
-      const getActiveAccount = (): Promise<AccountInfo> => {
-        
-        // First try the direct window method if available (more reliable)
-        if (typeof window['getActiveAccount'] === 'function') {
-          return window['getActiveAccount']();
-        }
-        
-        // Then try through electron.auth if available
-        if (this.electron.auth && typeof this.electron.auth.getActiveAccount === 'function') {
-          return this.electron.auth.getActiveAccount();
-        }
-        
-        // If not available, use a fallback (empty account or stored account)
-        return Promise.resolve(null);
-      };
+      const getActiveAccount = (): Promise<AccountInfo> => this.electron.auth.getActiveAccount();
       
       // Add handleRedirect for backward compatibility
       return {

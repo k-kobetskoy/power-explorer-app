@@ -1,7 +1,7 @@
-import { Inject, Injectable } from '@angular/core';
+import { Inject, Injectable, NgZone } from '@angular/core';
 
 import { BehaviorSubject, Observable, from, of } from 'rxjs';
-import { map, catchError, tap } from 'rxjs/operators';
+import { map, catchError, tap, finalize, switchMap } from 'rxjs/operators';
 import { EventBusService } from './event-bus/event-bus.service';
 import { EventData } from './event-bus/event-data';
 import { AppEvents } from './event-bus/app-events';
@@ -10,11 +10,15 @@ import { EnvironmentModel } from '../models/environment-model';
 import { AccountInfo } from '@azure/msal-browser';
 import { NotificationService } from './notification.service';
 import { ActivatedRoute, Router } from '@angular/router';
-import { ElectronService } from './electron.service';
+import { ElectronService, TokenResponse } from './electron.service';
+import { ErrorDialogService } from './error-dialog.service';
 
 @Injectable({ providedIn: 'root' })
 
 export class DesktopAuthService {
+  private signInPromptOpen = false;
+  private signInsInProgress = 0;
+
   constructor(
     @Inject(ACTIVE_ENVIRONMENT_MODEL) private activeEnvironmentModel: BehaviorSubject<EnvironmentModel>,
     @Inject(ACTIVE_ACCOUNT_MODEL) private activeAccount: BehaviorSubject<AccountInfo>,
@@ -22,7 +26,9 @@ export class DesktopAuthService {
     private eventBus: EventBusService,
     private notificationService: NotificationService,
     private router: Router,
-    private route: ActivatedRoute
+    private route: ActivatedRoute,
+    private errorDialogService: ErrorDialogService,
+    private ngZone: NgZone
   ) { 
     this.initializeListeners();
   }
@@ -33,16 +39,12 @@ export class DesktopAuthService {
     }
 
     // Listen for active environment changes from electron side
-    this.electronService.receive('environment-changed', (environment: EnvironmentModel) => {
-      if (environment) {
-        this.activeEnvironmentModel.next(environment);
-      } else {
-        this.activeEnvironmentModel.next(null);
-      }
+    this.listen('environment-changed', (environment: EnvironmentModel) => {
+      this.publishEnvironment(environment || null);
     });
 
     // Listen for active account changes from electron side
-    this.electronService.receive('account-changed', (account: AccountInfo) => {
+    this.listen('account-changed', (account: AccountInfo) => {
       if (account) {
         this.activeAccount.next(account);
       } else {
@@ -52,7 +54,7 @@ export class DesktopAuthService {
     });
 
     // Listen for auth success/failure messages
-    this.electronService.receive('auth-success', (data: { account: AccountInfo }) => {
+    this.listen('auth-success', (data: { account: AccountInfo }) => {
       if (data && data.account) {
         this.activeAccount.next(data.account);
         this.eventBus.emit(new EventData(AppEvents.LOGIN_SUCCESS, null));
@@ -62,19 +64,37 @@ export class DesktopAuthService {
       }
     });
 
-    this.electronService.receive('auth-failed', (data: { error: string, errorDescription: string }) => {
-      console.error('[ELECTRON-AUTH] Authentication failed:', data);
+    this.listen('auth-failed', (data: { error: string, errorDescription: string }) => {
+      console.error('[ELECTRON-AUTH] Authentication failed:', data?.error);
       this.notificationService.showError(`Login failed: ${data.errorDescription || data.error || 'Unknown error'}`);
     });
 
-    // Listen for app returned from auth event
-    this.electronService.receive('app-returned-from-auth', () => {
-      this.notificationService.showInfo('Welcome back to Power Explorer');
+    // Listen for app returned from auth event. The sign-in reports its own outcome,
+    // so no notification here: it would replace that one, a failure included
+    this.listen('app-returned-from-auth', () => {
       // If we already have an active account, no need to do anything else
       if (this.activeAccount.value) {
         this.eventBus.emit(new EventData(AppEvents.LOGIN_SUCCESS, null));
       }
     });
+  }
+
+  // IPC callbacks arrive outside Angular's zone, so views would not update without run()
+  private listen(channel: string, handler: (data: any) => void): void {
+    this.electronService.receive(channel, data => this.ngZone.run(() => handler(data)));
+  }
+
+  // The main process announces a change and the call that caused it returns the same model:
+  // publishing it twice would restart every request that follows the environment
+  private publishEnvironment(environment: EnvironmentModel | null): void {
+    const current = this.activeEnvironmentModel.value;
+    const unchanged = current?.apiUrl === environment?.apiUrl
+      && current?.url === environment?.url
+      && current?.friendlyName === environment?.friendlyName;
+
+    if (!unchanged) {
+      this.activeEnvironmentModel.next(environment);
+    }
   }
 
   /**
@@ -103,11 +123,15 @@ export class DesktopAuthService {
     }
 
 
+    // Connecting may sign in by itself: no prompt on top of it
+    this.signInsInProgress++;
+
     return from(this.electronService.environment.setActive(environmentModel)).pipe(
+      finalize(() => this.signInsInProgress--),
       map(result => {
         
         if (result.success) {
-          this.activeEnvironmentModel.next(environmentModel);
+          this.publishEnvironment(environmentModel);
           this.notificationService.showSuccess(`Connected to ${environmentModel.friendlyName}`);
         } else {
           this.notificationService.showError(`Failed to connect to ${environmentModel.friendlyName}`);
@@ -140,17 +164,10 @@ export class DesktopAuthService {
       return;
     }
   
-    // Try using the standard method
     from(this.electronService.auth.getActiveAccount())
       .pipe(
         catchError(error => {
-          console.error('[DESKTOP-AUTH] Error with standard getActiveAccount, trying direct method:', error);
-          
-          // Try direct method if standard method fails
-          if (typeof window['getActiveAccount'] === 'function') {
-            return from(window['getActiveAccount']());
-          }
-          
+          console.error('[DESKTOP-AUTH] Error getting the active account:', error?.message);
           return of(null);
         })
       )
@@ -166,7 +183,7 @@ export class DesktopAuthService {
 
     from(this.electronService.environment.getActive()).subscribe(result => {
       if (result.success && result.environment) {
-        this.activeEnvironmentModel.next(result.environment);
+        this.publishEnvironment(result.environment);
       }
     });
   }
@@ -179,7 +196,11 @@ export class DesktopAuthService {
       return of(false);
     }
 
+    this.signInsInProgress++;
+
+    // A failed or abandoned sign-in leaves the active environment and account as they are
     return from(this.electronService.auth.login(environmentModel)).pipe(
+      finalize(() => this.signInsInProgress--),
       tap(result => {
         if (result.success) {
           this.activeAccount.next(result.account);
@@ -187,15 +208,11 @@ export class DesktopAuthService {
           this.eventBus.emit(new EventData(AppEvents.LOGIN_SUCCESS, null));
           this.notificationService.showSuccess(`Successfully logged in to ${environmentModel.friendlyName}`);
         } else {
-          this.activeAccount.next(null);
-          this.activeEnvironmentModel.next(null);
-          this.notificationService.showError('Login failed');
+          this.notificationService.showError(`Login failed: ${result.error || 'Unknown error'}`);
         }
       }),
       map(result => result.success),
       catchError(error => {
-        this.activeAccount.next(null);
-        this.activeEnvironmentModel.next(null);
         this.notificationService.showError('Login error: ' + (error.message || 'Unknown error'));
         return of(false);
       })
@@ -203,18 +220,37 @@ export class DesktopAuthService {
   }
 
   /**
+   * Ask the user to sign in again. Does nothing while a prompt is open or a sign-in is running,
+   * so any number of failed requests produce one prompt.
+   */
+  offerSignIn(environmentModel: EnvironmentModel): void {
+    if (this.signInPromptOpen || this.signInsInProgress > 0) {
+      return;
+    }
+    this.signInPromptOpen = true;
+
+    this.errorDialogService.showError({
+      title: 'Sign in required',
+      message: `Sign in to continue working with ${environmentModel.friendlyName}.`,
+      actionLabel: 'Sign in'
+    }).afterClosed().pipe(
+      tap(() => this.signInPromptOpen = false),
+      switchMap(accepted => accepted ? this.login(environmentModel) : of(false))
+    ).subscribe();
+  }
+
+  /**
    * Get an access token for the specified scopes
    */
-  getToken(environmentModel: EnvironmentModel): Observable<string | null> {
+  getToken(environmentModel: EnvironmentModel): Observable<TokenResponse> {
+    const unavailable: TokenResponse = { success: false, error: 'Could not get an access token' };
+
     if (!this.electronService.isElectronApp || !this.electronService.electron) {
-      return of(null);
+      return of(unavailable);
     }
 
-    return from(this.electronService.auth.getToken(environmentModel)).pipe(      
-      map(result => result.success ? result.accessToken : null),
-      catchError(error => {
-        return of(null);
-      })
+    return from(this.electronService.auth.getToken(environmentModel)).pipe(
+      catchError(() => of(unavailable))
     );
   }
 

@@ -11,6 +11,7 @@ import { AllAttributesStrategy, RowData } from './result-table/all-attributes-st
 import { DefinedAttributesStrategy } from './result-table/defined-attributes-strategy';
 import { ACTIVE_ENVIRONMENT_MODEL } from 'src/app/models/tokens';
 import { EnvironmentModel } from 'src/app/models/environment-model';
+import { RequestNotSentError } from 'src/app/models/request-not-sent-error';
 
 interface FetchXmlQueryOptions {
   maxPageSize?: number;
@@ -166,7 +167,9 @@ export class XmlExecutorService extends BaseRequestService {
     const dataverseError = error?.error?.error;
     const message: string = dataverseError?.message || error?.message || 'Unknown error';
 
-    if (dataverseError?.message) {
+    if (error instanceof RequestNotSentError && error.signInRequired) {
+      // The sign-in prompt is already on screen; a second dialog would cover it
+    } else if (dataverseError?.message) {
       this.errorDialogService.showHttpError(error);
     } else {
       // No Dataverse body (network failure, missing environment): keep the original text
