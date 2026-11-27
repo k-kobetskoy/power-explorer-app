@@ -1,3 +1,4 @@
+import { isDataverseHost } from '../../../electron/dataverse-hosts';
 import { EnvironmentModel } from '../models/environment-model';
 
 export type EnvironmentUrls = Pick<EnvironmentModel, 'url' | 'apiUrl' | 'urlName'>;
@@ -6,7 +7,7 @@ const HOST_NAME = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/;
 
 /**
  * Turns what a user typed or pasted (host with or without https://, maybe a whole page address)
- * into the addresses of an environment. Returns null when it is not an https host name.
+ * into the addresses of an environment. Returns null when it is not an https Dataverse host.
  */
 export function parseEnvironmentUrl(input: string): EnvironmentUrls | null {
   const text = (input ?? '').trim();
@@ -20,7 +21,7 @@ export function parseEnvironmentUrl(input: string): EnvironmentUrls | null {
   }
 
   const host = parsed.hostname;
-  if (parsed.protocol !== 'https:' || parsed.port || parsed.username || parsed.password || !HOST_NAME.test(host)) {
+  if (parsed.protocol !== 'https:' || parsed.port || parsed.username || parsed.password || !HOST_NAME.test(host) || !isDataverseHost(host)) {
     return null;
   }
 

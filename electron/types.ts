@@ -21,7 +21,6 @@ export interface AuthConfig {
 export interface AuthResponse {
   success: boolean;
   account?: any;
-  accessToken?: string;
   error?: string;
 }
 

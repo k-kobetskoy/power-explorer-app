@@ -4,14 +4,12 @@
  * that's attached to the window in Electron environments
  */
 
-import { ElectronAPI, ElectronInvokeAPI } from './electron.d';
+import { ElectronAPI } from './electron.d';
 
 // Augment the global Window interface
 declare global {
   interface Window {
     electron: ElectronAPI;
-    electronAPI: ElectronInvokeAPI;
-    IPC_CHANNELS: any;
   }
 }
 
