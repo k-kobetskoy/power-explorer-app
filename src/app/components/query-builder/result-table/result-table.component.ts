@@ -196,22 +196,8 @@ export class ResultTableComponent implements OnInit, OnDestroy {
     this.selectedRow = null;
     this.formattedDataverseResult.next(this.resultData.rows);
     // Get all columns from header but exclude __entity_url
-    // This will include columns with null values after our processing strategy has run
+    // The header is in the order of the query and includes the columns that are null in every row
     const headerColumns = Object.keys(this.resultData.header || {}).filter(col => col !== '__entity_url');
-    
-    // Sort columns to ensure consistent display order
-    // First attempt to put ID fields at the beginning
-    headerColumns.sort((a, b) => {
-      // Put ID fields first
-      const aIsId = a.toLowerCase().endsWith('id') || a.toLowerCase() === 'id';
-      const bIsId = b.toLowerCase().endsWith('id') || b.toLowerCase() === 'id';
-      
-      if (aIsId && !bIsId) return -1;
-      if (!aIsId && bIsId) return 1;
-      
-      // Then sort alphabetically
-      return a.localeCompare(b);
-    });
     
     // Add the __entity_url column to the end if it exists in the data
     const hasEntityUrl = this.resultData.rows?.length > 0 && 

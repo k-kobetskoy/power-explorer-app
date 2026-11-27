@@ -56,6 +56,15 @@ describe('ResultTableComponent', () => {
     expect(externalLink.openExternalLink).toHaveBeenCalledOnceWith(link);
   }));
 
+  it('shows the columns in the order of the header', fakeAsync(() => {
+    const column = (name: string) => ({ logicalName: name, displayName: name, type: 'String' });
+    const header = { name: column('name'), createdon: column('createdon'), accountid: column('accountid') };
+
+    emit({ status: 'rows', result: { ...result, header } });
+
+    expect(fixture.componentInstance.displayedColumns).toEqual(['No.', 'name', 'createdon', 'accountid']);
+  }));
+
   const manyRows = (count: number): MatTableRawData => ({
     header: result.header,
     rows: Array.from({ length: count }, (_, rowIndex) => ({ ...result.rows[0], rowIndex }))
